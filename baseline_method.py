@@ -17,6 +17,7 @@ class BaselineMethod:
     def build(self) -> None:
         self.read_csv()
         self.check_missing_values()
+        marginals = self.fit_marginals()
 
     def read_csv(self) -> None:
         """
@@ -83,19 +84,14 @@ class BaselineMethod:
         
         return clustered_dfs
 
-    def fit_copulas(self) -> pd.DataFrame:
+    def fit_marginals(self) -> dict[str, object]:
         """
         Step 1: Estimate the Marginal Distributions
-        :return:
+        :return: Dictionary of uniform fitted marginal distributions.
         """
-        pass
-
-    def prob_integral_tf(self) -> pd.DataFrame:
-        """
-        Step 2: Calculate the CDF of all marginals and transform the observed data to uniform random variables
-        :return:
-        """
-        pass
+        from marginal_fitting import fit_marginal_distributions
+        marginals = fit_marginal_distributions(self.df)
+        return marginals
 
     def fit_copula(self):
         """

@@ -3,7 +3,7 @@ import numpy as np
 from scipy import stats
 
 
-def fit_marginal_distributions(df):
+def fit_marginal_distributions(df, pit=True) -> dict[str, object]:
     """
     Fit t-distributions to each stock's returns and return the distributions in a dictionary.
 
@@ -18,6 +18,7 @@ def fit_marginal_distributions(df):
 
     # Dictionary to store fitted distributions
     fitted_dists = {}
+    pit_values = {}
 
     for symbol in symbols:
         # Get returns for this symbol
@@ -30,4 +31,13 @@ def fit_marginal_distributions(df):
         t_dist = stats.t(df=df_t, loc=loc_t, scale=scale_t)
         fitted_dists[symbol] = t_dist
 
-    return fitted_dists
+        # If PIT is True, transform returns to uniform values
+        if pit:
+            # Apply the CDF to get uniform values (PIT)
+            pit_values[symbol] = t_dist.cdf(returns)
+
+    # Return either the fitted distributions or the PIT values
+    if pit:
+        return pit_values
+    else:
+        return fitted_dists
