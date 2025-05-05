@@ -1,9 +1,11 @@
 import pandas as pd
-import numpy as np
+import copulas
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from sklearn.metrics import silhouette_score
+from custom_copulas import SkewedTCopula
+from marginal_fitting import fit_marginal_distributions
 
 class BaselineMethod:
     def __init__(self, df, file_path='data_for_kit.csv', features = None):
@@ -12,111 +14,99 @@ class BaselineMethod:
         self.target = 'ret_crsp'
         self.features = ['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open'] if not features else features
 
-    def build(self):
+    def build(self) -> None:
         self.read_csv()
         self.check_missing_values()
-        self.data_clustering()
 
-    def read_csv(self):
+    def read_csv(self) -> None:
+        """
+        Step 0.1: read the dataset from a CSV file.
+        """
         self.df = pd.read_csv(self.file_path)   # Read the CSV file
         self.df['date'] = pd.to_datetime(self.df['date']) # Convert date column to datetime
     
-    def check_missing_values(self):
-        missing_values = self.df.isnull().sum()  # Check for missing values
+    def check_missing_values(self) -> None:
+        """
+        Check for missing values in the dataset.
+        """
+        missing_values = self.df.isnull().sum()
         if missing_values.sum() == 0:
             print("\nNo missing values found in the dataset!")
         else:
             print(f"\nTotal number of missing values: {missing_values.sum()}")
-            #   palceholder for missing value handling
+            #palceholder for missing value handling
             
-    def data_clustering(self):
-        # Prepare the data
+    def data_clustering(self, plot_silhouette=False):
+        """
+        Method to cluster the data (currently using K-Means clustering).
+        :param plot_silhouette: Set to True to plot silhouette scores for different numbers of clusters.
+        :return: dataframes for each cluster, and the final clustering results.
+        """
+        # Select features for clustering
         x = self.df[self.features]
-        y = self.df[self.target]
-
-        # Scale the features
+        
+        # Standardize the features
         scaler = StandardScaler()
         x_scaled = scaler.fit_transform(x)
-
-        # Find optimal number of clusters using elbow method and silhouette score
-        inertias = []
+        
+        # Initialize lists to store silhouette scores
         silhouette_scores = []
-        k_num = range(2, 11)
+        max_clusters = 10
+        
+        # Calculate silhouette scores for different numbers of clusters
+        for n_clusters in range(2, max_clusters + 1):
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(x_scaled)
+            silhouette_avg = silhouette_score(x_scaled, cluster_labels)
+            silhouette_scores.append(silhouette_avg)
+        
+        # Find optimal number of clusters
+        optimal_clusters = silhouette_scores.index(max(silhouette_scores)) + 2
+        
+        # Perform final clustering with optimal number of clusters
+        final_kmeans = KMeans(n_clusters=optimal_clusters, random_state=42)
+        self.df['cluster'] = final_kmeans.fit_predict(x_scaled)
+        
+        # Create separate dataframes for each cluster
+        clustered_dfs = {f'cluster_{i}': self.df[self.df['cluster'] == i] 
+                         for i in range(optimal_clusters)}
+        
+        # Plot silhouette scores if requested
+        if plot_silhouette:
+            plt.figure(figsize=(10, 6))
+            plt.plot(range(2, max_clusters + 1), silhouette_scores, marker='o')
+            plt.xlabel('number of clusters')
+            plt.ylabel('silhouette score')
+            plt.title('silhouette score vs number of clusters')
+            plt.grid(True)
+            plt.show()
+        
+        return clustered_dfs
 
-        for k in k_num:
-            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-            kmeans.fit(x_scaled)
-            inertias.append(kmeans.inertia_)
-            silhouette_scores.append(silhouette_score(x_scaled, kmeans.labels_))
+    def fit_copulas(self) -> pd.DataFrame:
+        """
+        Step 1: Estimate the Marginal Distributions
+        :return:
+        """
+        pass
 
-        # Plot elbow curve and silhouette scores
-        plt.figure(figsize=(12, 5))
+    def prob_integral_tf(self) -> pd.DataFrame:
+        """
+        Step 2: Calculate the CDF of all marginals and transform the observed data to uniform random variables
+        :return:
+        """
+        pass
 
-        # Elbow curve
-        plt.subplot(1, 2, 1)
-        plt.plot(k_num, inertias, 'bx-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Inertia')
-        plt.title('Elbow Method')
+    def fit_copula(self):
+        """
+        Step 3: Fit a chosen copula to the transformed data
+        :return:
+        """
+        pass
 
-        # Silhouette score
-        plt.subplot(1, 2, 2)
-        plt.plot(k_num, silhouette_scores, 'rx-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Silhouette Score')
-        plt.title('Silhouette Method')
+    def evaluate_baseline(self):
+        """
+        Step 4: Evaluate the model
+        :return:
+        """
 
-        plt.tight_layout()
-        plt.show()
-
-        # Apply K-means with optimal k (let's say k=3 for this example)
-        optimal_k = 3  # Adjust this based on the elbow curve and silhouette score
-        kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(x_scaled)
-
-        # Add cluster labels to the original dataframe
-        self.df['Cluster'] = cluster_labels
-
-        # Analyze clusters with respect to the target variable (ret_crsp)
-        print("\nCluster Analysis:")
-        cluster_analysis = self.df.groupby('Cluster').agg({
-            'ret_crsp': ['mean', 'std', 'count'],
-            'open_crsp': 'mean',
-            'close_crsp': 'mean',
-            'log_ret_lag_close_to_open': 'mean'
-        }).round(4)
-
-        print(cluster_analysis)
-
-        # Visualize clusters with respect to returns
-        plt.figure(figsize=(10, 6))
-        for i in range(optimal_k):
-            cluster_data = self.df[self.df['Cluster'] == i]
-            plt.scatter(cluster_data['close_crsp'],
-                       cluster_data['ret_crsp'],
-                       label=f'Cluster {i}')
-
-        plt.xlabel('Closing Price')
-        plt.ylabel('Returns (ret_crsp)')
-        plt.title('Clusters vs Returns')
-        plt.legend()
-        plt.show()
-
-        # Box plot of returns by cluster
-        plt.figure(figsize=(10, 6))
-        self.df.boxplot(column='ret_crsp', by='Cluster')
-        plt.title('Distribution of Returns by Cluster')
-        plt.ylabel('Returns (ret_crsp)')
-        plt.show()
-
-        # Print cluster centers
-        print("\nCluster Centers (Original Scale):")
-        cluster_centers = pd.DataFrame(
-            scaler.inverse_transform(kmeans.cluster_centers_),
-            columns=self.features
-        )
-        print(cluster_centers)
-
-        # Calculate mean return for each cluster
-        print("\nMean Returns by Cluster:")
-        print(self.df.groupby('Cluster')['ret_crsp'].mean().round(4))

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 class SkewedTCopula:
-    def __init__(self, marginals, nu, delta):
+    def __init__(self, marginals, nu=None, delta=None):
         """
         Initialize the Skewed t Copula with a list of marginal distributions.
         :param marginals: List of marginal distributions (functions). Each function should accept a size argument.
@@ -113,8 +113,5 @@ def example_usage():
     plt.ylabel('Variable 2')
     plt.show()
 
-
-# Run the example
-example_usage()
 
 
