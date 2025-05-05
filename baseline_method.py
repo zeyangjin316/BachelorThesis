@@ -1,32 +1,53 @@
+import datetime
 import pandas as pd
 import copulas
+import matplotlib.pyplot as plt
+from typing import Union
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
 from sklearn.metrics import silhouette_score
-from custom_copulas import SkewedTCopula
-from marginal_fitting import fit_marginal_distributions
 
 class BaselineMethod:
-    def __init__(self, df, file_path='data_for_kit.csv', features = None):
-        self.df = df
+    def __init__(self, df, split_point: float|datetime =0.8, file_path: str = 'data_for_kit.csv',
+                 features: list[str] = None):
+        """
+        Initialize the BaselineMethod experiment.
+        
+        Args:
+            df:             Input DataFrame
+            split_point:    Either a float between 0 and 1 representing the percentage of data for training,
+                            or a datetime-like object specifying the split date. Default is 0.8 (80% training).
+            file_path:      Path to the CSV file. Default is 'data_for_kit.csv'.
+            features:       List of feature columns to use. Default is ['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open'].
+        """
+        self.train_set: pd.DataFrame = pd.DataFrame()  # Initialize with empty DataFrame
+        self.test_set: pd.DataFrame = pd.DataFrame()   # Initialize with empty DataFrame
+        
+        self.full_data = df
+        self.split_point = split_point
         self.file_path = file_path
         self.target = 'ret_crsp'
         self.features = ['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open'] if not features else features
 
-    def build(self) -> None:
-        self.read_csv()
-        self.check_missing_values()
-        marginals = self.fit_marginals()
+    def prepare(self) -> None:
+        self._read_csv()
+        self._check_missing_values()
+        self.train_set, self.test_set = self._split_data(self.split_point)
 
-    def read_csv(self) -> None:
+    def train(self):
+        marginals = self._fit_marginals(self.train_set)
+
+    def evaluate(self):
+        pass
+
+    def _read_csv(self) -> None:
         """
         Step 0.1: read the dataset from a CSV file.
         """
         self.df = pd.read_csv(self.file_path)   # Read the CSV file
         self.df['date'] = pd.to_datetime(self.df['date']) # Convert date column to datetime
     
-    def check_missing_values(self) -> None:
+    def _check_missing_values(self) -> None:
         """
         Check for missing values in the dataset.
         """
@@ -36,8 +57,36 @@ class BaselineMethod:
         else:
             print(f"\nTotal number of missing values: {missing_values.sum()}")
             #palceholder for missing value handling
-            
-    def data_clustering(self, plot_silhouette=False):
+
+    def _split_data(self, split_point) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Split the data into training and testing sets.
+        
+        Args:
+            split_point: Either a float between 0 and 1 representing the percentage of data for training,
+                        or a datetime-like object specifying the split date.
+        
+        Returns:
+            tuple[pd.DataFrame, pd.DataFrame]: Training and testing dataframes
+        """
+        if isinstance(split_point, (float, int)):
+            if not 0 < split_point < 1:
+                raise ValueError("Percentage split must be between 0 and 1")
+            split_idx = int(len(self.df) * split_point)
+            train_split = self.df.iloc[:split_idx]
+            test_split = self.df.iloc[split_idx:]
+        else:
+            # Try to convert to datetime if it's not already
+            split_date = pd.to_datetime(split_point)
+            train_split = self.df[self.df['date'] <= split_date]
+            test_split = self.df[self.df['date'] > split_date]
+        
+        if len(train_split) == 0 or len(test_split) == 0:
+            raise ValueError("Split resulted in empty training or testing set")
+        
+        return train_split, test_split
+
+    def _data_clustering(self, plot_silhouette=False):
         """
         Method to cluster the data (currently using K-Means clustering).
         :param plot_silhouette: Set to True to plot silhouette scores for different numbers of clusters.
@@ -84,25 +133,18 @@ class BaselineMethod:
         
         return clustered_dfs
 
-    def fit_marginals(self) -> dict[str, object]:
+    def _fit_marginals(self, data: pd.DataFrame) -> dict[str, object]:
         """
         Step 1: Estimate the Marginal Distributions
         :return: Dictionary of uniform fitted marginal distributions.
         """
         from marginal_fitting import fit_marginal_distributions
-        marginals = fit_marginal_distributions(self.df)
+        marginals = fit_marginal_distributions(data)
         return marginals
 
-    def fit_copula(self):
+    def _fit_copula(self):
         """
         Step 3: Fit a chosen copula to the transformed data
         :return:
         """
         pass
-
-    def evaluate_baseline(self):
-        """
-        Step 4: Evaluate the model
-        :return:
-        """
-
