@@ -1,8 +1,6 @@
 import datetime
 import pandas as pd
-import copulas
 import matplotlib.pyplot as plt
-from typing import Union
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
@@ -35,7 +33,8 @@ class BaselineMethod:
         self.train_set, self.test_set = self._split_data(self.split_point)
 
     def train(self):
-        marginals = self._fit_marginals(self.train_set)
+        marginals = self._transform_train_data(self.train_set)
+        copula = self._fit_copula(marginals)
 
     def evaluate(self):
         pass
@@ -133,18 +132,47 @@ class BaselineMethod:
         
         return clustered_dfs
 
-    def _fit_marginals(self, data: pd.DataFrame) -> dict[str, object]:
+    def _transform_train_data(self, data: pd.DataFrame) -> dict[str, object]:
         """
-        Step 1: Estimate the Marginal Distributions
-        :return: Dictionary of uniform fitted marginal distributions.
-        """
-        from marginal_fitting import fit_marginal_distributions
-        marginals = fit_marginal_distributions(data)
-        return marginals
+        Fits marginal distributions to the provided data and transforms the data using
+        Probability Integral Transform (PIT) to uniform distribution.
 
-    def _fit_copula(self):
+        :param data: The input data as a pandas DataFrame to fit and transform.
+        :type data: pd.DataFrame
+
+        :return: Dictionary containing transformed data mapped to uniform distribution.
+        :rtype: dict[str, object]
         """
-        Step 3: Fit a chosen copula to the transformed data
-        :return:
+        from marginal_fitting import fit_marginal_distributions, transform_to_uniform
+
+        # First fit the distributions
+        self.fitted_distributions = fit_marginal_distributions(data)
+
+        # Then transform to uniform using PIT
+        uniform_data = transform_to_uniform(data, self.fitted_distributions)
+
+        return uniform_data
+
+
+def _fit_copula(self, marginals: dict[str, object]):
         """
-        pass
+        Step 3: Fit a Gaussian copula to the transformed data
+        
+        Args:
+            marginals: Dictionary containing the PIT (Probability Integral Transform) values
+                  for each symbol's returns
+        
+        Returns:
+            fitted_copula: The fitted Gaussian copula object
+        """
+        from copulas.multivariate import GaussianMultivariate
+        
+        # Convert the marginals dictionary to a DataFrame
+        # Each column will be the PIT values for a symbol
+        uniform_data = pd.DataFrame(marginals)
+        
+        # Initialize and fit the Gaussian copula
+        gaussian_copula = GaussianMultivariate()
+        gaussian_copula.fit(uniform_data)
+        
+        return gaussian_copula
