@@ -28,8 +28,13 @@ class CopulaEstimator:
         self.train_set = pd.DataFrame()
         self.test_set = pd.DataFrame()
         self.fitted_copula = None
-        self.fitted_distributions = None
+        self.fitted_marginals = None
 
+    def run(self):
+        self.prepare()
+        self.train()
+        self.evaluate()
+        return self.fitted_copula, self.fitted_marginals
 
     def prepare(self) -> None:
         self._read_csv()
@@ -150,10 +155,10 @@ class CopulaEstimator:
         from copula_marginals import fit_marginal_distributions, transform_to_uniform
 
         # First fit the distributions
-        self.fitted_distributions = fit_marginal_distributions(data)
+        self.fitted_marginals = fit_marginal_distributions(data)
 
         # Then transform to uniform using PIT
-        uniform_data = transform_to_uniform(data, self.fitted_distributions)
+        uniform_data = transform_to_uniform(data, self.fitted_marginals)
 
         return uniform_data
 
