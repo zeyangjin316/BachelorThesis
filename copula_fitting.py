@@ -30,29 +30,9 @@ class CopulaEstimator(CustomModel):
         self.fitted_marginals = None
 
     def run(self):
-        self.split()
         self.train()
         self.evaluate()
         return self.fitted_copula, self.fitted_marginals
-
-    def split(self) -> None:
-        if isinstance(self.split_point, (float, int)):
-            if not 0 < self.split_point < 1:
-                raise ValueError("Percentage split must be between 0 and 1")
-            split_idx = int(len(self.data) * self.split_point)
-            train_split = self.data.iloc[:split_idx]
-            test_split = self.data.iloc[split_idx:]
-        else:
-            # Try to convert to datetime if it's not already
-            split_date = pd.to_datetime(self.split_point)
-            train_split = self.data[self.data['date'] <= split_date]
-            test_split = self.data[self.data['date'] > split_date]
-
-        if len(train_split) == 0 or len(test_split) == 0:
-            raise ValueError("Split resulted in empty training or testing set")
-
-        self.train_set = train_split
-        self.test_set = test_split
 
     def train(self):
         marginals = self._transform_train_data(self.train_set)
