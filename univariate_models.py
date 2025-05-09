@@ -194,21 +194,40 @@ class UnivariateModel(CustomModel):
         arma_model = fitted_model.rx2('arma_model')
         garch_model = fitted_model.rx2('garch_model')
         
-        # Get model parameters
-        arma_coef = r.coef(arma_model)
-        garch_params = r.coef(garch_model)
-        arma_fitted = r.fitted(arma_model)
-        garch_fitted = r.fitted(garch_model)
+        # Get model parameters and convert them safely
+        try:
+            arma_coef = r.coef(arma_model)
+            arma_coef_py = [float(x) for x in arma_coef]
+        except:
+            arma_coef_py = []
+        
+        try:
+            garch_params = r.coef(garch_model)
+            garch_params_py = [float(x) for x in garch_params]
+        except:
+            garch_params_py = []
+        
+        try:
+            arma_fitted = r.fitted(arma_model)
+            arma_fitted_py = list(pandas2ri.rpy2py(arma_fitted))
+        except:
+            arma_fitted_py = []
+        
+        try:
+            garch_fitted = r.fitted(garch_model)
+            garch_fitted_py = list(pandas2ri.rpy2py(garch_fitted))
+        except:
+            garch_fitted_py = []
         
         # Return organized results
         return {
             'arma_model': arma_model,
             'garch_model': garch_model,
-            'arma_coefficients': pandas2ri.rpy2py(arma_coef),
-            'garch_parameters': pandas2ri.rpy2py(garch_params),
+            'arma_coefficients': arma_coef_py,
+            'garch_parameters': garch_params_py,
             'fitted_values': {
-                'arma': pandas2ri.rpy2py(arma_fitted),
-                'garch': pandas2ri.rpy2py(garch_fitted)
+                'arma': arma_fitted_py,
+                'garch': garch_fitted_py
             }
         }
 
@@ -267,6 +286,7 @@ class UnivariateModel(CustomModel):
         Make predictions using fitted ARMA-GARCH model
         """
         from rpy2.robjects import pandas2ri, r
+        from rpy2.robjects.vectors import FloatVector
         pandas2ri.activate()
         
         fitted_model = self.fitted_models[symbol]
@@ -278,7 +298,8 @@ class UnivariateModel(CustomModel):
         
         # Make predictions
         arma_pred = r.forecast(arma_model, h=len(new_data))
-        arma_mean = pandas2ri.rpy2py(r.as_vector(arma_pred.rx2('mean')))
+        # Use FloatVector to convert the mean predictions
+        arma_mean = pandas2ri.rpy2py(FloatVector(arma_pred.rx2('mean')))
         
         # Get GARCH predictions (volatility forecasts)
         garch_pred = r.ugarchforecast(garch_model, n_ahead=len(new_data))
