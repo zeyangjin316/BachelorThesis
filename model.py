@@ -6,9 +6,9 @@ class CustomModel(ABC):
     """
     Abstract base class for forecasting models.
     """
-    def __init__(self, file_path: str, data:pd.DataFrame, split_point: float|datetime):
+    def __init__(self, file_path: str, data: pd.DataFrame = pd.DataFrame(), split_point: float|datetime = 0.8):
         self.file_path = file_path
-        if data is not None:
+        if data.empty is False:
             self.data = data
         else:
             self.data = self._get_data()

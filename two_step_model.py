@@ -5,12 +5,9 @@ import pandas as pd
 
 class TwoStepModel(CustomModel):
     def __init__(self, file_path: str, univariate: str, copula: str, split_point: float|datetime =0.8):
-        super().__init__(file_path, split_point)
+        super().__init__(file_path,  split_point)
         self.univariate_type = univariate
         self.copula_type = copula
-
-    def split(self):
-        pass
 
     def train(self):
         self._train_univariate(self.univariate_type)
