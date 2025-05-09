@@ -1,16 +1,12 @@
 import datetime
 import pandas as pd
-import matplotlib.pyplot as plt
 from model import CustomModel
 from copulas.multivariate import GaussianMultivariate
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import silhouette_score
 
 class CopulaEstimator(CustomModel):
-    def __init__(self, file_path: str = 'data_for_kit.csv', split_point: float|datetime =0.8,
-                 method: str = "Gaussian",features: list[str] = None):
-        super().__init__(file_path, split_point)
+    def __init__(self, data_input: str|pd.DataFrame, split_point: float|datetime =0.8,
+                 method: str = "Gaussian", features: list[str] = None):
+        super().__init__(data_input, split_point)
 
         self.method = method
         self.target = 'ret_crsp'
@@ -20,6 +16,7 @@ class CopulaEstimator(CustomModel):
         self.fitted_marginals = None
 
     def run(self):
+        self._split()
         self.train()
         return self.fitted_copula, self.fitted_marginals
 
