@@ -1,7 +1,5 @@
 import logging
-from univariate_models import UnivariateModel
-from copula_fitting import CopulaEstimator
-from two_step_model import TwoStepModel
+from copula_method.two_step_model import TwoStepModel
 
 logging.basicConfig(
     level=logging.DEBUG,

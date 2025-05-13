@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Union
 from model import CustomModel
 from univariate_models import UnivariateModel
-from copula_fitting import CopulaEstimator
+from copula_method.copula_fitting import CopulaEstimator
 
 logger = logging.getLogger(__name__)
 
