@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Union
 from model import CustomModel
 from copulas.multivariate import GaussianMultivariate
+from copula_method.copula_marginals import fit_marginal_distributions, transform_to_uniform
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,12 @@ class CopulaEstimator(CustomModel):
         self.fitted_marginals = None
         logger.info("Copula fitting model initialized")
 
-    def run(self):
+    def _build(self):
         self._split()
-        self.train()
+        self.fit()
         return self.fitted_copula, self.fitted_marginals
 
-    def train(self):
+    def fit(self):
         logger.info("Starting training step for copula fitting model")
         uniform_data = self._transform_train_data(self.train_set)
         self.fitted_copula = self._fit_copula(uniform_data)
@@ -41,8 +42,6 @@ class CopulaEstimator(CustomModel):
         pass
 
     def _transform_train_data(self, data: pd.DataFrame) -> dict[str, object]:
-        from copula_marginals import fit_marginal_distributions, transform_to_uniform
-
         logger.info("Starting to transform training data")
         self.fitted_marginals = fit_marginal_distributions(data)
         uniform_data = transform_to_uniform(data, self.fitted_marginals)

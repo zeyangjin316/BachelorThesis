@@ -15,7 +15,7 @@ logging.getLogger('rpy2').setLevel(logging.INFO)
 def main():
     # Initialize and run the model
     test = TwoStepModel()
-    test.train()
+    test.fit()
 
 if __name__ == "__main__":
     main()

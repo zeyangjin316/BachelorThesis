@@ -13,7 +13,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras import layers
 from tensorflow.keras.losses import Loss
 import seaborn as sns
-sns.set()
+sns.set_theme()
 
 
 # define energy score

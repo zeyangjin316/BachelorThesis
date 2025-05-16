@@ -10,7 +10,7 @@ import tensorflow as tf
 from sklearn import preprocessing
 import matplotlib.pyplot as plt
 import seaborn as sns
-sns.set()
+sns.set_theme()
 plt.close("all")
 
 from cgm.cgm_models_linear import cgm

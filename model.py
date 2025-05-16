@@ -10,31 +10,33 @@ class CustomModel(ABC):
     """
     Abstract base class for forecasting models.
     """
-    def __init__(self, data_input: Union[pd.DataFrame, str], split_point: Union[float, datetime.datetime] = 0.8, split: bool = True):
-        logger.info("Trying to fetch data")
-        if isinstance(data_input, str):
-            logger.debug("File location given: %s", data_input)# Fixed condition
-            self.file_path = data_input
-            self.data = self._get_data()
-        elif isinstance(data_input, pd.DataFrame):
-            logger.debug("Data frame given")
-            self.data = data_input
-        else:
-            raise ValueError("Invalid input type. Must be a string or a pandas DataFrame.")
-        logger.info("Data fetched successfully")
-        #logger.debug("Data shape: %s", self.data.info())
-
-        logger.info("Initializing train and test sets")
-        self.train_set = pd.DataFrame()
-        self.test_set = pd.DataFrame()
-        self.split = split
+    def __init__(self, data_input: Union[pd.DataFrame, str], split_point: Union[float, datetime.datetime] = 0.8):
+        self.data_input = data_input
         self.split_point = split_point
 
+        logger.info("Trying to fetch data")
+        self.data = self._get_data()
+        logger.info("Data fetched successfully")
+
+        logger.info("Starting data splitting")
+        self.train_set = pd.DataFrame()
+        self.test_set = pd.DataFrame()
+        self._split()
+
     def _get_data(self) -> pd.DataFrame:
-        try:
-            return pd.read_csv(self.file_path)
-        except Exception as e:
-            raise ValueError(f"Error reading data from {self.file_path}: {str(e)}")
+        if isinstance(self.data_input, str):
+            logger.debug("File location given: %s", self.data_input)# Fixed condition
+            try:
+                return pd.read_csv(self.data_input)
+            except Exception as e:
+                raise ValueError(f"Error reading data from {self.data_input}: {str(e)}")
+        elif isinstance(self.data_input, pd.DataFrame):
+            logger.debug("Data frame given")
+            return self.data_input
+        else:
+            raise ValueError("Invalid input type. Must be a string or a pandas DataFrame.")
+
+
 
     def _split(self):
         """
@@ -53,13 +55,8 @@ class CustomModel(ABC):
             raise ValueError("split_point must be either float or datetime")
 
     @abstractmethod
-    def train(self):
+    def fit(self):
         """Train the model"""
-        pass
-
-    @abstractmethod
-    def test(self):
-        """Test the model"""
         pass
 
     @abstractmethod

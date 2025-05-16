@@ -2,20 +2,17 @@ import datetime
 import pandas as pd
 import logging as log
 from typing import Union
-from model import CustomModel
 from rpy2.robjects import pandas2ri, r
-from rpy2.robjects.packages import importr
 
-class UnivariateModel(CustomModel):
+class UnivariateModel():
     def __init__(self, data_input: Union[str, pd.DataFrame], split_point: Union[float, datetime.datetime] = 0.8,
                  method: str = "ARMAGARCH"):
         log.info(f"Initializing {method} model")
-        super().__init__(data_input, split_point)
         self.method = method
         self.fitted_models = {}
         log.info(f"{method} model initialized")
 
-    def train(self):
+    def fit(self):
         """Train univariate models for all symbols"""
         log.info(f"Training {self.method} models for all symbols")
         
@@ -82,9 +79,6 @@ class UnivariateModel(CustomModel):
             'model': fitted_model.rx2('model'),
             'features_used': features
         }
-
-    def test(self):
-        pass
 
     def predict(self):
         pass
