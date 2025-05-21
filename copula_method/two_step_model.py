@@ -1,17 +1,19 @@
 import logging
 import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Union
 from copula_method.univariate_models import UnivariateModel
 from copula_method.copula_fitting import CopulaEstimator
+from reader import Reader
 
 logger = logging.getLogger(__name__)
 
 class TwoStepModel:
-    def __init__(self, file_path: str = "data_for_kit.csv", split_point: Union[float, datetime] = 0.8,
+    def __init__(self, split_point: Union[float, datetime] = 0.8,
                  univariate_type: str = "ARMAGARCH", copula_type: str ="Gaussian"):
         logger.info("Initializing two-step model")
-        self.file_path = file_path
+        self.reader = Reader()
         self.split_point = split_point
         self.train_set = pd.DataFrame()
         self.test_set = pd.DataFrame()
@@ -22,55 +24,19 @@ class TwoStepModel:
 
     def _build(self) -> None:
         logger.info("Trying to fetch data")
-        self.data = self._get_data()
+        self.reader.read_data()
+        self.reader.merge_all()
         logger.info("Data fetched successfully")
 
         logger.info("Starting data splitting")
-        self._split_data()
+        self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
 
-    def _get_data(self) -> pd.DataFrame:
-        try:
-            return pd.read_csv(self.file_path)
-        except Exception as e:
-            raise ValueError(f"Error reading data from {self.file_path}: {str(e)}")
-
-    def _split_data(self) -> None:
-        """
-        Split the data into training and test sets based on split_point, handling each time series individually.
-        """
-        logger.info("Splitting data with split_point: %s", self.split_point)
-
-        # Initialize lists to store the train and test sets
-        train_dfs = []
-        test_dfs = []
-
-        # Loop through each unique time series (symbol)
-        for symbol in self.data['symbol'].unique():
-            symbol_df = self.data[self.data['symbol'] == symbol]
-
-            if isinstance(self.split_point, float):
-                # Split based on percentage
-                split_idx = int(len(symbol_df) * self.split_point)
-                train_dfs.append(symbol_df.iloc[:split_idx])
-                test_dfs.append(symbol_df.iloc[split_idx:])
-
-            elif isinstance(self.split_point, datetime):
-                # Split based on datetime
-                train_dfs.append(symbol_df[symbol_df['date'] <= self.split_point])
-                test_dfs.append(symbol_df[symbol_df['date'] > self.split_point])
-
-            else:
-                raise ValueError("split_point must be either float or datetime")
-
-        # Concatenate all train and test sets, ensuring temporal order is preserved
-        self.train_set = pd.concat(train_dfs).sort_index()
-        self.test_set = pd.concat(test_dfs).sort_index()
 
     def _fit_univariate(self):
         logger.info(f"Fit univariate models of type: {self.univariate_type}")
         self.univariate_models = UnivariateModel(
-            data_input=self.data,
+            data_input=self.reader.data,
             split_point=0.8,
             method=self.univariate_type
         )
@@ -80,12 +46,12 @@ class TwoStepModel:
     def _fit_copula(self):
         logger.info(f"Fit copula of type: {self.copula_type}")
         copula_estimator = CopulaEstimator(
-            data_input=self.data,
+            data_input=self.reader.data,
             split_point=0.8,
             method=self.copula_type,
             features=['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
         )
-        self.fitted_copula, self.copula_marginals = copula_estimator.run()
+        self.fitted_copula, self.copula_marginals = copula_estimator.fit()
 
     def fit(self):
         logger.info("Starting fitting two-step model")
@@ -99,4 +65,28 @@ class TwoStepModel:
 
     def evaluate(self):
         pass
+
+    def show_data(self):
+        for symbol in self.train_set['sym_root'].unique():
+            # Get the corresponding train and test data for the symbol
+            train_data = self.train_set[self.train_set['sym_root'] == symbol]
+            test_data = self.test_set[self.test_set['sym_root'] == symbol]
+
+            # Create a plot for the symbol's training and test data
+            plt.figure(figsize=(10, 6))
+
+            # Plot the training data
+            plt.plot(train_data['date'], train_data['ret_crsp'], label='Train', color='blue')
+
+            # Plot the test data
+            plt.plot(test_data['date'], test_data['ret_crsp'], label='Test', color='red')
+
+            # Add labels and title
+            plt.xlabel('Date')
+            plt.ylabel('Value')
+            plt.title(f"'ret_crsp' Split for {symbol}")
+            plt.legend()
+
+            # Show the plot
+            plt.show()
 
