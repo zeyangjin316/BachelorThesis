@@ -106,13 +106,11 @@ class TwoStepModel:
     def _fit_copula(self, input_matrix: pd.DataFrame):
         logger.info(f"Fit copula of type: {self.copula_type}")
         copula_estimator = CopulaEstimator(
-            data_input=self.reader.data,
-            split_point=0.8,
             method=self.copula_type,
             features=['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
         )
-        copula_estimator.fit(input_matrix)
-        self.fitted_copula = copula_estimator
+
+        self.fitted_copula = copula_estimator.fit(input_matrix)
 
     def fit(self):
         logger.info("Starting fitting two-step model")
@@ -130,8 +128,46 @@ class TwoStepModel:
         self._fit_copula(gaussian_copula_input)
         logger.info("Finished fitting two-step model")
 
-    def sample(self):
-        pass
+    def sample(self, n_trajectories: int = 1000):
+        """
+        Generate joint return samples from the fitted copula and marginal forecast distributions.
+
+        Returns:
+            pd.DataFrame: shape = (n_trajectories, n_symbols)
+        """
+        logger.info(f"Sampling {n_trajectories} multivariate scenarios from copula")
+
+        # Safety check
+        if not self.fitted_copula:
+            raise ValueError("Copula must be fitted before calling sample().")
+
+        copula_model = self.fitted_copula  # already the fitted copula object
+        if not hasattr(copula_model, "sample"):
+            raise AttributeError("Fitted copula object has no sample method.")
+
+        # Get symbols from the copula input (based on what was modeled)
+        symbols = copula_model.columns if hasattr(copula_model, "columns") else self.test_set[
+            'sym_root'].unique().tolist()
+
+        # Step 1: Sample from the copula in Gaussian space
+        z_samples = copula_model.sample(n_trajectories)
+        z_samples.columns = symbols
+
+        # Step 2: Gaussian → Uniform space
+        u_samples = norm.cdf(z_samples)
+
+        # Step 3: Invert marginal distributions using univariate model samples
+        final_samples = pd.DataFrame(index=range(n_trajectories), columns=symbols)
+
+        for symbol in symbols:
+            logger.info(f"Inverting marginal forecast for {symbol}")
+            forecast_samples = np.sort(self.univariate_models.sample(symbol, self.n_samples))
+            percentiles = np.linspace(0, 1, len(forecast_samples))
+            # Interpolate each u to its quantile value
+            final_samples[symbol] = np.interp(u_samples[symbol], percentiles, forecast_samples)
+
+        logger.info("Sample generation completed successfully")
+        return final_samples
 
 
     def show_data(self):
