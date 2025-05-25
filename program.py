@@ -15,8 +15,8 @@ logging.getLogger('rpy2').setLevel(logging.INFO)
 
 def main():
     # Initialize and run the model
-    reader = Reader()
-    reader.split_data()
+    test = TwoStepModel()
+    test.show_data()
 
 if __name__ == "__main__":
     main()

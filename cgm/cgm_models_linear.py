@@ -117,6 +117,8 @@ class cgm(object):
             self._build_model = self._build_model_t2m
         elif model_type == 'ws':
             self._build_model = self._build_model_ws
+        elif model_type == 'mts':
+            self._build_model = self._build_model_mts
     
         self.model = self._build_model()
     
@@ -259,7 +261,11 @@ class cgm(object):
         return Model(inputs=[input_mean, input_std, input_all], outputs=y_positive)
     
 
-            
+    def _build_model_mts(self):
+
+
+
+
     def fit(self, x, y, batch_size=64, epochs=300, verbose=0, callbacks=None, 
             validation_split=0.0, validation_data=None, sample_weight=None, learningrate=0.01):
         """

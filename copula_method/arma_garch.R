@@ -20,3 +20,15 @@ fit_arma_garch <- function(time_series) {
   # Return the results of the ARMA and GARCH models
   return(list(arma_model = arma_model, garch_model = garch_model))
 }
+
+forecast_arma_garch_samples <- function(arma_model, garch_model, n_samples = 1000) {
+  # Forecast mean from ARMA
+  mu <- as.numeric(forecast(arma_model, h = 1)$mean)
+
+  # Forecast volatility from GARCH
+  sigma <- sigma(ugarchforecast(garch_model, n.ahead = 1))
+
+  # Generate samples from predictive distribution
+  samples <- rnorm(n_samples, mean = mu, sd = sigma)
+  return(samples)
+}

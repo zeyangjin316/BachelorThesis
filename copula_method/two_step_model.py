@@ -32,15 +32,28 @@ class TwoStepModel:
         self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
 
-
     def _fit_univariate(self):
         logger.info(f"Fit univariate models of type: {self.univariate_type}")
         self.univariate_models = UnivariateModel(
-            data_input=self.reader.data,
+            data=self.reader.data,
             split_point=0.8,
             method=self.univariate_type
         )
         return self.univariate_models.fit()
+
+    def _predict_univariate(self, n_samples = 100):
+        logger.info("Generating samples from univariate models")
+
+        all_samples = {}
+        for symbol in self.train_set['sym_root'].unique():
+            try:
+                samples = self.univariate_models.sample_from_model(symbol, n_samples)
+                all_samples[symbol] = samples
+            except Exception as e:
+                logger.warning(f"Could not generate samples for {symbol}: {str(e)}")
+
+        self.samples = all_samples
+        logger.info("Finished generating univariate samples")
 
 
     def _fit_copula(self):
@@ -61,6 +74,7 @@ class TwoStepModel:
 
     def predict(self):
         logger.info("Generating data with two-step model")
+
         logger.info("Finished generating data with two-step model")
 
     def evaluate(self):
