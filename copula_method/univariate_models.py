@@ -1,16 +1,13 @@
-import datetime
 import pandas as pd
 import logging as log
-from typing import Union
+import numpy as np
 from rpy2.robjects import pandas2ri, r
-from reader import Reader
+
 
 class UnivariateModel():
-    def __init__(self, data: pd.DataFrame, split_point: Union[float, datetime.datetime] = 0.8,
-                 method: str = "ARMAGARCH"):
+    def __init__(self, data: pd.DataFrame, method: str = "ARMAGARCH"):
         log.info(f"Initializing {method} model")
         self.data = data
-        self.split_point = split_point
         self.method = method
         self.fitted_models = {}
         log.info(f"{method} model initialized")
@@ -57,6 +54,19 @@ class UnivariateModel():
             'features_used': features
         }
 
+    def _sample_arma_garch(self, symbol, n_samples):
+        r.source("arma_garch.R")
+        sample_func = r['forecast_arma_garch_samples']
+        model = self.fitted_models[symbol]
+        return pandas2ri.rpy2py(sample_func(model["arma_model"], model["garch_model"], n_samples))
+
+    def _sample_lasso(self, symbol, n_samples):
+        # Assume homoskedastic residuals for LASSO sampling
+        model = self.fitted_models[symbol]
+        y_pred = model['y_hat']
+        residual_std = model['residual_std']
+        return np.random.normal(loc=y_pred, scale=residual_std, size=n_samples)
+
     def fit(self):
         """Train univariate models for all symbols"""
         log.info(f"Training {self.method} models for all symbols")
@@ -88,19 +98,10 @@ class UnivariateModel():
         log.info(f"Completed training for {len(self.fitted_models)} symbols")
         return self.fitted_models
 
-    def sample_from_model(self, symbol: str, n_samples: int = 1000):
-        from rpy2.robjects import r
-        r.source("arma_garch.R")
-        r_sample = r["forecast_arma_garch_samples"]
-
-        model = self.fitted_models.get(symbol)
-        if not model:
-            raise ValueError(f"No fitted model for symbol {symbol}")
-
-        arma_model = model["arma_model"]
-        garch_model = model["garch_model"]
-        samples = r_sample(arma_model, garch_model, n_samples)
-
-        from rpy2.robjects import pandas2ri
-        pandas2ri.activate()
-        return pandas2ri.rpy2py(samples)
+    def sample(self, symbol: str, n_samples: int = 1000):
+        if self.method == "ARMAGARCH":
+            return self._sample_arma_garch(symbol, n_samples)
+        elif self.method == "LASSO":
+            return self._sample_lasso(symbol, n_samples)
+        else:
+            raise NotImplementedError(f"Sampling not implemented for {self.method}")

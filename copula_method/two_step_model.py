@@ -1,6 +1,8 @@
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import norm
 from datetime import datetime
 from typing import Union
 from copula_method.univariate_models import UnivariateModel
@@ -11,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 class TwoStepModel:
     def __init__(self, split_point: Union[float, datetime] = 0.8,
-                 univariate_type: str = "ARMAGARCH", copula_type: str ="Gaussian"):
+                 univariate_type: str = "ARMAGARCH", copula_type: str ="Gaussian",
+                 n_samples: int = 1000):
         logger.info("Initializing two-step model")
         self.reader = Reader()
         self.split_point = split_point
@@ -19,6 +22,7 @@ class TwoStepModel:
         self.test_set = pd.DataFrame()
         self.univariate_type = univariate_type
         self.copula_type = copula_type
+        self.n_samples = n_samples
         self._build()
         logger.info("Two-step model initialized")
 
@@ -32,31 +36,74 @@ class TwoStepModel:
         self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
 
-    def _fit_univariate(self):
+    def _fit_univariate_models(self):
         logger.info(f"Fit univariate models of type: {self.univariate_type}")
+        # Fit a univariate model for each symbol in the training set
         self.univariate_models = UnivariateModel(
-            data=self.reader.data,
-            split_point=0.8,
+            data=self.train_set,
             method=self.univariate_type
         )
         return self.univariate_models.fit()
 
-    def _predict_univariate(self, n_samples = 100):
+    def _predict_univariate(self):
         logger.info("Generating samples from univariate models")
-
-        all_samples = {}
+        # Create samples for each symbol with the created univariate models
+        self.samples = {}
         for symbol in self.train_set['sym_root'].unique():
             try:
-                samples = self.univariate_models.sample_from_model(symbol, n_samples)
-                all_samples[symbol] = samples
+                samples = self.univariate_models.sample(symbol, self.n_samples)
+                self.samples[symbol] = samples
             except Exception as e:
-                logger.warning(f"Could not generate samples for {symbol}: {str(e)}")
-
-        self.samples = all_samples
+                logger.warning(f"Sample generation failed for {symbol}: {e}")
         logger.info("Finished generating univariate samples")
 
+    def _compute_gaussian_copula_inputs(self, days: list[str]) -> pd.DataFrame:
+        """
+        Compute Z_{d,h} = Φ⁻¹ ∘ F^d,h(X_{d,h}) values for all given days and symbols.
 
-    def _fit_copula(self):
+        Args:
+            days: List of date strings (e.g., ["2020-01-01", "2020-01-02"])
+
+        Returns:
+            DataFrame: rows = days, columns = symbols, values = Gaussianized PITs (Z_{d,h})
+        """
+        logger.info(f"Computing Gaussian copula inputs for {len(days)} days")
+
+        matrix = []
+
+        for day in days:
+            test_data_day = self.test_set[self.test_set['date'] == day]
+            z_row = {}
+
+            for symbol in test_data_day['sym_root'].unique():
+                try:
+                    # Step 1: Sample from the univariate model
+                    samples = self.univariate_models.sample(symbol, self.n_samples)
+
+                    # Step 2: Get actual value
+                    X_dh = test_data_day[test_data_day['sym_root'] == symbol]['ret_crsp'].values[0]
+
+                    # Step 3: Compute PIT value u_d,h = F^d,h(X_d,h)
+                    u_dh = np.mean(samples <= X_dh)
+                    u_dh = np.clip(u_dh, 1e-6, 1 - 1e-6)  # avoid ±inf
+
+                    # Step 4: Gaussian transform Z_d,h = Φ⁻¹(u_d,h)
+                    Z_dh = norm.ppf(u_dh)
+
+                    z_row[symbol] = Z_dh
+
+                except Exception as e:
+                    logger.warning(f"Failed to compute Z_d,h for {symbol} on {day}: {e}")
+                    continue
+
+            if z_row:
+                matrix.append(pd.Series(z_row, name=day))
+
+        df = pd.DataFrame(matrix)
+        logger.info(f"Created copula input matrix with shape: {df.shape}")
+        return df.dropna(axis=1)  # remove columns with missing values
+
+    def _fit_copula(self, input_matrix: pd.DataFrame):
         logger.info(f"Fit copula of type: {self.copula_type}")
         copula_estimator = CopulaEstimator(
             data_input=self.reader.data,
@@ -64,21 +111,28 @@ class TwoStepModel:
             method=self.copula_type,
             features=['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
         )
-        self.fitted_copula, self.copula_marginals = copula_estimator.fit()
+        copula_estimator.fit(input_matrix)
+        self.fitted_copula = copula_estimator
 
     def fit(self):
         logger.info("Starting fitting two-step model")
-        self._fit_univariate()
-        self._fit_copula()
+        # Step 1: Fit univariate models
+        self._fit_univariate_models()
+
+        # Step 2: Generate forecast samples
+        self._predict_univariate()
+
+        # Step 3: Create Gaussianized copula inputs
+        days = sorted(self.test_set['date'].unique())
+        gaussian_copula_input = self._compute_gaussian_copula_inputs(days)
+
+        # Step 4: Fit copula using the transformed data
+        self._fit_copula(gaussian_copula_input)
         logger.info("Finished fitting two-step model")
 
-    def predict(self):
-        logger.info("Generating data with two-step model")
-
-        logger.info("Finished generating data with two-step model")
-
-    def evaluate(self):
+    def sample(self):
         pass
+
 
     def show_data(self):
         for symbol in self.train_set['sym_root'].unique():
