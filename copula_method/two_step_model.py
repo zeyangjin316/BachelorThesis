@@ -9,6 +9,7 @@ from typing import Union
 from scipy.special import erfinv
 from copula_method.uv_forecaster import UnivariateForecaster
 from copula_method.copula_fitting import CopulaEstimator
+from copula_method.copula_helpers import CopulaTransformer
 from reader import Reader
 
 logger = logging.getLogger(__name__)
@@ -38,38 +39,6 @@ class TwoStepModel:
         self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
 
-    def _compute_gaussian_copula_inputs(self, days: list[str], uv_samples: dict[str, np.ndarray]) -> pd.DataFrame:
-        logger.info(f"Computing Gaussian copula inputs using empirical sample-based PIT")
-
-        matrix = []
-
-        for day in tqdm(days, desc="Computing copula inputs"):
-            test_data_day = self.test_set[self.test_set['date'] == day]
-            z_row = {}
-
-            for symbol in test_data_day['sym_root'].unique():
-                try:
-                    samples = uv_samples[symbol]
-                    X_dh = test_data_day[test_data_day['sym_root'] == symbol]['ret_crsp'].values[0]
-
-                    u_dh = np.mean(samples <= X_dh)
-                    u_dh = np.clip(u_dh, 1e-6, 1 - 1e-6)
-
-                    #z = norm.ppf(u)
-                    Z_dh = np.sqrt(2) * erfinv(2 * u_dh - 1)
-                    z_row[symbol] = Z_dh
-
-                except Exception as e:
-                    logger.warning(f"Failed to compute Z_d,h for {symbol} on {day}: {e}")
-                    continue
-
-            if z_row:
-                matrix.append(pd.Series(z_row, name=day))
-
-        df = pd.DataFrame(matrix)
-        logger.info(f"Created Gaussian copula input matrix with shape: {df.shape}")
-        return df.dropna(axis=1)
-
     def _fit_copula(self, input_matrix: pd.DataFrame):
         logger.info(f"Fitting copula of type: {self.copula_type}")
         copula_estimator = CopulaEstimator(self.copula_type)
@@ -86,7 +55,7 @@ class TwoStepModel:
 
         # Step 3: Create Gaussianized copula inputs
         days = sorted(self.test_set['date'].unique())
-        gaussian_copula_input = self._compute_gaussian_copula_inputs(days, uv_samples)
+        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, uv_samples, days)
 
         # Step 4: Fit copula using the transformed data
         self._fit_copula(gaussian_copula_input)

@@ -1,5 +1,5 @@
 import logging
-from univariate_models import UnivariateModel
+from copula_method.univariate_models import UnivariateModel
 
 logger = logging.getLogger(__name__)
 
