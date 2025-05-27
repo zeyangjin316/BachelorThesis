@@ -6,10 +6,10 @@ from tqdm import tqdm
 from scipy.stats import norm
 from datetime import datetime
 from typing import Union
-from scipy.special import erfinv
 from copula_method.uv_forecaster import UnivariateForecaster
 from copula_method.copula_fitting import CopulaEstimator
 from copula_method.copula_helpers import CopulaTransformer
+from evaluator import ForecastEvaluator
 from reader import Reader
 
 logger = logging.getLogger(__name__)
@@ -39,26 +39,23 @@ class TwoStepModel:
         self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
 
-    def _fit_copula(self, input_matrix: pd.DataFrame):
-        logger.info(f"Fitting copula of type: {self.copula_type}")
-        copula_estimator = CopulaEstimator(self.copula_type)
-        #print(input_matrix.var())
-        copula_estimator.fit(input_matrix)
-        self.fitted_copula = copula_estimator.fitted_copula
-        logger.info(f"Fitted copula of type {self.copula_type} successfully")
 
     def fit(self):
         logger.info("Starting fitting two-step model")
 
+        #Step 1: Fit univariate models
         univariate_forecaster = UnivariateForecaster(self.train_set, self.univariate_type)
         uv_samples = univariate_forecaster.generate_samples(self.train_set['sym_root'].unique(), self.n_samples)
 
-        # Step 3: Create Gaussianized copula inputs
+        # Step 2: Create Gaussianized copula inputs
         days = sorted(self.test_set['date'].unique())
         gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, uv_samples, days)
 
-        # Step 4: Fit copula using the transformed data
-        self._fit_copula(gaussian_copula_input)
+        # Step 3: Fit copula using the transformed data
+        copula_estimator = CopulaEstimator(self.copula_type)
+        # print(input_matrix.var())
+        copula_estimator.fit(gaussian_copula_input)
+        self.fitted_copula = copula_estimator.fitted_copula
         logger.info("Finished fitting two-step model")
 
     def sample(self, n_trajectories: int = 1000):
@@ -102,46 +99,12 @@ class TwoStepModel:
         logger.info("Sample generation completed successfully")
         return final_samples
 
-    def evaluate_energy_score(self, samples):
+    def evaluate(self, samples):
         """
         Evaluate the generated samples with Energy Score and Copula Energy Score.
         """
-        from scoring_rules_supp import es_sample, ces_sample
-
-        test_dates = sorted(self.test_set['date'].unique())
-        symbols = samples.columns.tolist()
-
-        # Reshape the fixed sample matrix: (1, n_dim, n_samples)
-        y_pred = samples.T.values[np.newaxis, :, :]  # shape (1, n_dim, n_samples)
-
-        energy_scores = []
-        copula_energy_scores = []
-
-        for date in tqdm(test_dates, desc="Evaluating test days"):
-            test_day_data = self.test_set[self.test_set['date'] == date]
-
-            try:
-                y_true = np.array([
-                    test_day_data[test_day_data['sym_root'] == symbol]['ret_crsp'].values[0]
-                    for symbol in symbols
-                ]).reshape(1, -1)
-            except IndexError:
-                logger.warning(f"Skipping {date} due to missing values.")
-                continue
-
-            es = es_sample(y_true, y_pred)
-            ces = ces_sample(y_true, y_pred)
-
-            energy_scores.append(es)
-            copula_energy_scores.append(ces)
-
-        mean_es = np.mean(energy_scores)
-        mean_ces = np.mean(copula_energy_scores)
-
-        logger.info(f"\nMean Energy Score: {mean_es:.6f}")
-        logger.info(f"Mean Copula Energy Score: {mean_ces:.6f}")
-
-        return mean_es, mean_ces
+        evaluator = ForecastEvaluator(self.test_set)
+        return evaluator.evaluate_energy_score(samples)
 
     def show_data(self):
         for symbol in self.train_set['sym_root'].unique():
