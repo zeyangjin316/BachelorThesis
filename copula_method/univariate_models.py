@@ -1,6 +1,7 @@
 import pandas as pd
 import logging as log
 import numpy as np
+import os
 from rpy2.robjects import pandas2ri, r
 
 
@@ -20,7 +21,10 @@ class UnivariateModel():
         r_timeseries = pandas2ri.py2rpy(time_series)
 
         # Fit model
-        r.source('arma_garch.R')
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        r_script_path = os.path.join(current_dir, "arma_garch.R")
+        r.source(r_script_path)
         fitted_model = r['fit_arma_garch'](r_timeseries)
 
         # Return only R model objects
@@ -55,7 +59,9 @@ class UnivariateModel():
         }
 
     def _sample_arma_garch(self, symbol, n_samples):
-        r.source("arma_garch.R")
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        r_script_path = os.path.join(current_dir, "arma_garch.R")
+        r.source(r_script_path)
         sample_func = r['forecast_arma_garch_samples']
         model = self.fitted_models[symbol]
         return pandas2ri.rpy2py(sample_func(model["arma_model"], model["garch_model"], n_samples))
