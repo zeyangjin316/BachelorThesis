@@ -2,6 +2,7 @@ import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 from scipy.stats import norm
 from datetime import datetime
 from typing import Union
@@ -64,7 +65,7 @@ class TwoStepModel:
 
         matrix = []
 
-        for day in days:
+        for day in tqdm(days, desc="Computing copula inputs"):
             test_data_day = self.test_set[self.test_set['date'] == day]
             z_row = {}
 
@@ -173,16 +174,16 @@ class TwoStepModel:
         energy_scores = []
         copula_energy_scores = []
 
-        for date in test_dates:
+        for date in tqdm(test_dates, desc="Evaluating test days"):
             test_day_data = self.test_set[self.test_set['date'] == date]
 
             try:
                 y_true = np.array([
                     test_day_data[test_day_data['sym_root'] == symbol]['ret_crsp'].values[0]
                     for symbol in symbols
-                ]).reshape(1, -1)  # shape (1, n_dim)
+                ]).reshape(1, -1)
             except IndexError:
-                print(f"Skipping {date} due to missing values.")
+                logger.warning(f"Skipping {date} due to missing values.")
                 continue
 
             es = es_sample(y_true, y_pred)
@@ -191,13 +192,11 @@ class TwoStepModel:
             energy_scores.append(es)
             copula_energy_scores.append(ces)
 
-            print(f"{date} - ES: {es:.6f}, CES: {ces:.6f}")
-
         mean_es = np.mean(energy_scores)
         mean_ces = np.mean(copula_energy_scores)
 
-        print(f"\nMean Energy Score: {mean_es:.6f}")
-        print(f"Mean Copula Energy Score: {mean_ces:.6f}")
+        logger.info(f"\nMean Energy Score: {mean_es:.6f}")
+        logger.info(f"Mean Copula Energy Score: {mean_ces:.6f}")
 
         return mean_es, mean_ces
 
