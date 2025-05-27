@@ -2,6 +2,7 @@ import pandas as pd
 import logging as log
 import numpy as np
 import os
+from tqdm import tqdm
 from rpy2.robjects import pandas2ri, r, numpy2ri
 
 
@@ -76,7 +77,7 @@ class UnivariateModel():
 
     def fit(self):
         """Train univariate models for all symbols"""
-        log.info(f"Training {self.method} models for all symbols")
+        log.info(f"Fitting {self.method} models for all symbols")
 
         def train_model(symbol):
             log.debug(f"Fitting model for symbol: {symbol}")
@@ -90,7 +91,7 @@ class UnivariateModel():
                 else:
                     raise ValueError(f"Unsupported method: {self.method}")
 
-                log.debug(f"Successfully fitted model for {symbol}")
+                #log.debug(f"Successfully fitted model for {symbol}")
                 return model
             except Exception as e:
                 log.error(f"Failed to fit model for {symbol}: {str(e)}")
@@ -99,7 +100,8 @@ class UnivariateModel():
         # Train models using dictionary comprehension
         symbols = self.data['sym_root'].unique()
         self.fitted_models = {
-            symbol: model for symbol in symbols if (model := train_model(symbol)) is not None
+            symbol: model for symbol in tqdm(symbols, desc="Fitting univariate models")
+            if (model := train_model(symbol)) is not None
         }
 
         log.info(f"Completed training for {len(self.fitted_models)} symbols")

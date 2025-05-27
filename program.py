@@ -15,7 +15,7 @@ logging.getLogger('rpy2').setLevel(logging.INFO)
 
 def main():
     # Initialize and run the model
-    test = TwoStepModel(n_samples=100)
+    test = TwoStepModel(n_samples=1000)
     test.fit()
     samples = test.sample()
     print(samples.head(10))
