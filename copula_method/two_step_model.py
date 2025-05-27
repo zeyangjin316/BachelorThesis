@@ -7,7 +7,7 @@ from scipy.stats import norm
 from datetime import datetime
 from typing import Union
 from scipy.special import erfinv
-from copula_method.univariate_models import UnivariateModel
+from copula_method.uv_forecaster import UnivariateForecaster
 from copula_method.copula_fitting import CopulaEstimator
 from reader import Reader
 
@@ -37,28 +37,6 @@ class TwoStepModel:
         logger.info("Starting data splitting")
         self.train_set, self.test_set = self.reader.split_data(self.split_point)
         logger.info("Data splitting completed")
-
-    def _fit_univariate_models(self):
-        logger.info(f"Fit univariate models of type: {self.univariate_type}")
-        # Fit a univariate model for each symbol in the training set
-        self.univariate_models = UnivariateModel(
-            data=self.train_set,
-            method=self.univariate_type
-        )
-        self.univariate_models.fit()
-
-    def _predict_univariate(self):
-        logger.info("Generating samples from univariate models")
-        # Create samples for each symbol with the created univariate models
-        univariate_samples: dict[str, np.ndarray] = {}
-        for symbol in self.train_set['sym_root'].unique():
-            try:
-                samples = self.univariate_models.sample(symbol, self.n_samples)
-                univariate_samples[symbol] = samples
-            except Exception as e:
-                logger.warning(f"Sample generation failed for {symbol}: {e}")
-        logger.info("Finished generating univariate samples")
-        return univariate_samples
 
     def _compute_gaussian_copula_inputs(self, days: list[str], uv_samples: dict[str, np.ndarray]) -> pd.DataFrame:
         logger.info(f"Computing Gaussian copula inputs using empirical sample-based PIT")
@@ -102,11 +80,9 @@ class TwoStepModel:
 
     def fit(self):
         logger.info("Starting fitting two-step model")
-        # Step 1: Fit univariate models
-        self._fit_univariate_models()
 
-        # Step 2: Generate forecast samples
-        uv_samples = self._predict_univariate()
+        univariate_forecaster = UnivariateForecaster(self.train_set, self.univariate_type)
+        uv_samples = univariate_forecaster.generate_samples(self.train_set['sym_root'].unique(), self.n_samples)
 
         # Step 3: Create Gaussianized copula inputs
         days = sorted(self.test_set['date'].unique())
