@@ -176,7 +176,8 @@ def _get_pobs(y, dat):
             pobs_dat[n,d,:] = (2*_rank_data_random_tiebreaker(dat[n,d,:])-1)/(2*M)
             
     idx = np.argmin(np.abs(np.expand_dims(y, axis=2) - dat), axis=2) # return index of nearest rank for observed y for each i and d
-    pobs_y = np.squeeze(np.take_along_axis(pobs_dat, indices=np.expand_dims(idx, axis=2), axis=2)) # select nearest rank
+    pobs_y = np.take_along_axis(pobs_dat, indices=np.expand_dims(idx, axis=2), axis=2)
+    pobs_y = np.squeeze(pobs_y, axis=2) # select nearest rank
 
     # ensure uniformity for uncalibrated predictive distributions
     pobs_y_adjusted = np.zeros_like(pobs_y)

@@ -15,9 +15,12 @@ logging.getLogger('rpy2').setLevel(logging.INFO)
 
 def main():
     # Initialize and run the model
-    test = TwoStepModel()
+    test = TwoStepModel(n_samples=100)
     test.fit()
-    test.sample()
+    samples = test.sample()
+    print(samples.head(10))
+    print(samples.tail(10))
+    test.evaluate_energy_score(samples)
 
 if __name__ == "__main__":
     main()

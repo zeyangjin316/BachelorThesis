@@ -2,7 +2,7 @@ import pandas as pd
 import logging as log
 import numpy as np
 import os
-from rpy2.robjects import pandas2ri, r
+from rpy2.robjects import pandas2ri, r, numpy2ri
 
 
 class UnivariateModel():
@@ -64,7 +64,8 @@ class UnivariateModel():
         r.source(r_script_path)
         sample_func = r['forecast_arma_garch_samples']
         model = self.fitted_models[symbol]
-        return pandas2ri.rpy2py(sample_func(model["arma_model"], model["garch_model"], n_samples))
+        r_result = sample_func(model["arma_model"], model["garch_model"], n_samples)
+        return np.array(r_result)
 
     def _sample_lasso(self, symbol, n_samples):
         # Assume homoskedastic residuals for LASSO sampling
@@ -102,7 +103,7 @@ class UnivariateModel():
         }
 
         log.info(f"Completed training for {len(self.fitted_models)} symbols")
-        return self.fitted_models
+
 
     def sample(self, symbol: str, n_samples: int = 1000):
         if self.method == "ARMAGARCH":

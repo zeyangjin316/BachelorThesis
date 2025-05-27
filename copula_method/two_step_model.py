@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime
 from typing import Union
+from scipy.special import erfinv
 from copula_method.univariate_models import UnivariateModel
 from copula_method.copula_fitting import CopulaEstimator
 from reader import Reader
@@ -43,31 +44,23 @@ class TwoStepModel:
             data=self.train_set,
             method=self.univariate_type
         )
-        return self.univariate_models.fit()
+        self.univariate_models.fit()
 
     def _predict_univariate(self):
         logger.info("Generating samples from univariate models")
         # Create samples for each symbol with the created univariate models
-        self.samples = {}
+        univariate_samples: dict[str, np.ndarray] = {}
         for symbol in self.train_set['sym_root'].unique():
             try:
                 samples = self.univariate_models.sample(symbol, self.n_samples)
-                self.samples[symbol] = samples
+                univariate_samples[symbol] = samples
             except Exception as e:
                 logger.warning(f"Sample generation failed for {symbol}: {e}")
         logger.info("Finished generating univariate samples")
+        return univariate_samples
 
-    def _compute_gaussian_copula_inputs(self, days: list[str]) -> pd.DataFrame:
-        """
-        Compute Z_{d,h} = Φ⁻¹ ∘ F^d,h(X_{d,h}) values for all given days and symbols.
-
-        Args:
-            days: List of date strings (e.g., ["2020-01-01", "2020-01-02"])
-
-        Returns:
-            DataFrame: rows = days, columns = symbols, values = Gaussianized PITs (Z_{d,h})
-        """
-        logger.info(f"Computing Gaussian copula inputs for {len(days)} days")
+    def _compute_gaussian_copula_inputs(self, days: list[str], uv_samples: dict[str, np.ndarray]) -> pd.DataFrame:
+        logger.info(f"Computing Gaussian copula inputs using empirical sample-based PIT")
 
         matrix = []
 
@@ -77,19 +70,14 @@ class TwoStepModel:
 
             for symbol in test_data_day['sym_root'].unique():
                 try:
-                    # Step 1: Sample from the univariate model
-                    samples = self.univariate_models.sample(symbol, self.n_samples)
-
-                    # Step 2: Get actual value
+                    samples = uv_samples[symbol]
                     X_dh = test_data_day[test_data_day['sym_root'] == symbol]['ret_crsp'].values[0]
 
-                    # Step 3: Compute PIT value u_d,h = F^d,h(X_d,h)
                     u_dh = np.mean(samples <= X_dh)
-                    u_dh = np.clip(u_dh, 1e-6, 1 - 1e-6)  # avoid ±inf
+                    u_dh = np.clip(u_dh, 1e-6, 1 - 1e-6)
 
-                    # Step 4: Gaussian transform Z_d,h = Φ⁻¹(u_d,h)
-                    Z_dh = norm.ppf(u_dh)
-
+                    #z = norm.ppf(u)
+                    Z_dh = np.sqrt(2) * erfinv(2 * u_dh - 1)
                     z_row[symbol] = Z_dh
 
                 except Exception as e:
@@ -100,8 +88,8 @@ class TwoStepModel:
                 matrix.append(pd.Series(z_row, name=day))
 
         df = pd.DataFrame(matrix)
-        logger.info(f"Created copula input matrix with shape: {df.shape}")
-        return df.dropna(axis=1)  # remove columns with missing values
+        logger.info(f"Created Gaussian copula input matrix with shape: {df.shape}")
+        return df.dropna(axis=1)
 
     def _fit_copula(self, input_matrix: pd.DataFrame):
         logger.info(f"Fit copula of type: {self.copula_type}")
@@ -109,8 +97,9 @@ class TwoStepModel:
             method=self.copula_type,
             features=['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
         )
-
-        self.fitted_copula = copula_estimator.fit(input_matrix)
+        copula_estimator.fit(input_matrix)
+        self.fitted_copula = copula_estimator.fitted_copula
+        logger.info(f"Fitted copula of type {self.copula_type} successfully")
 
     def fit(self):
         logger.info("Starting fitting two-step model")
@@ -118,11 +107,11 @@ class TwoStepModel:
         self._fit_univariate_models()
 
         # Step 2: Generate forecast samples
-        self._predict_univariate()
+        uv_samples = self._predict_univariate()
 
         # Step 3: Create Gaussianized copula inputs
         days = sorted(self.test_set['date'].unique())
-        gaussian_copula_input = self._compute_gaussian_copula_inputs(days)
+        gaussian_copula_input = self._compute_gaussian_copula_inputs(days, uv_samples)
 
         # Step 4: Fit copula using the transformed data
         self._fit_copula(gaussian_copula_input)
@@ -154,7 +143,7 @@ class TwoStepModel:
         z_samples.columns = symbols
 
         # Step 2: Gaussian → Uniform space
-        u_samples = norm.cdf(z_samples)
+        u_samples = pd.DataFrame(norm.cdf(z_samples), columns=symbols)
 
         # Step 3: Invert marginal distributions using univariate model samples
         final_samples = pd.DataFrame(index=range(n_trajectories), columns=symbols)
@@ -169,6 +158,48 @@ class TwoStepModel:
         logger.info("Sample generation completed successfully")
         return final_samples
 
+    def evaluate_energy_score(self, samples):
+        """
+        Evaluate the generated samples with Energy Score and Copula Energy Score.
+        """
+        from scoring_rules_supp import es_sample, ces_sample
+
+        test_dates = sorted(self.test_set['date'].unique())
+        symbols = samples.columns.tolist()
+
+        # Reshape the fixed sample matrix: (1, n_dim, n_samples)
+        y_pred = samples.T.values[np.newaxis, :, :]  # shape (1, n_dim, n_samples)
+
+        energy_scores = []
+        copula_energy_scores = []
+
+        for date in test_dates:
+            test_day_data = self.test_set[self.test_set['date'] == date]
+
+            try:
+                y_true = np.array([
+                    test_day_data[test_day_data['sym_root'] == symbol]['ret_crsp'].values[0]
+                    for symbol in symbols
+                ]).reshape(1, -1)  # shape (1, n_dim)
+            except IndexError:
+                print(f"Skipping {date} due to missing values.")
+                continue
+
+            es = es_sample(y_true, y_pred)
+            ces = ces_sample(y_true, y_pred)
+
+            energy_scores.append(es)
+            copula_energy_scores.append(ces)
+
+            print(f"{date} - ES: {es:.6f}, CES: {ces:.6f}")
+
+        mean_es = np.mean(energy_scores)
+        mean_ces = np.mean(copula_energy_scores)
+
+        print(f"\nMean Energy Score: {mean_es:.6f}")
+        print(f"Mean Copula Energy Score: {mean_ces:.6f}")
+
+        return mean_es, mean_ces
 
     def show_data(self):
         for symbol in self.train_set['sym_root'].unique():
