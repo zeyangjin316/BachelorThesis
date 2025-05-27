@@ -6,10 +6,9 @@ logger = logging.getLogger(__name__)
 
 
 class CopulaEstimator():
-    def __init__(self, method: str = "Gaussian", features: list[str] = None):
+    def __init__(self, method: str = "Gaussian"):
         logger.info(f"Initializing copula fitting model with {method} copula")
         self.method = method
-        self.features = ['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open'] if not features else features
         self.fitted_copula = None
         logger.info("Copula fitting model initialized")
 

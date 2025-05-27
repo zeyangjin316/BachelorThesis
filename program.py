@@ -17,10 +17,10 @@ def main():
     # Initialize and run the model
     test = TwoStepModel(n_samples=1000)
     test.fit()
-    samples = test.sample()
-    print(samples.head(10))
-    print(samples.tail(10))
-    test.evaluate_energy_score(samples)
+    #samples = test.sample()
+    #print(samples.head(10))
+    #print(samples.tail(10))
+    #test.evaluate_energy_score(samples)
 
 if __name__ == "__main__":
     main()

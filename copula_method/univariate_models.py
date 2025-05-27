@@ -4,7 +4,9 @@ import numpy as np
 import os
 from tqdm import tqdm
 from rpy2.robjects import pandas2ri, r, numpy2ri
+from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
 
+rpy2_logger.setLevel(log.ERROR)
 
 class UnivariateModel():
     def __init__(self, data: pd.DataFrame, method: str = "ARMAGARCH"):
@@ -80,7 +82,7 @@ class UnivariateModel():
         log.info(f"Fitting {self.method} models for all symbols")
 
         def train_model(symbol):
-            log.debug(f"Fitting model for symbol: {symbol}")
+            #tqdm.write(f"Fitting model for symbol: {symbol}")  # Clean log under tqdm
             symbol_data = self.data[self.data['sym_root'] == symbol]
 
             try:
@@ -90,14 +92,11 @@ class UnivariateModel():
                     model = self._fit_lasso(symbol_data)
                 else:
                     raise ValueError(f"Unsupported method: {self.method}")
-
-                #log.debug(f"Successfully fitted model for {symbol}")
                 return model
             except Exception as e:
-                log.error(f"Failed to fit model for {symbol}: {str(e)}")
+                tqdm.write(f"[ERROR] Failed to fit model for {symbol}: {e}")
                 return None
 
-        # Train models using dictionary comprehension
         symbols = self.data['sym_root'].unique()
         self.fitted_models = {
             symbol: model for symbol in tqdm(symbols, desc="Fitting univariate models")

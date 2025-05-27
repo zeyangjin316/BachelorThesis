@@ -96,8 +96,8 @@ class TwoStepModel:
         logger.info(f"Fit copula of type: {self.copula_type}")
         copula_estimator = CopulaEstimator(
             method=self.copula_type,
-            features=['open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
         )
+        print(input_matrix.var())
         copula_estimator.fit(input_matrix)
         self.fitted_copula = copula_estimator.fitted_copula
         logger.info(f"Fitted copula of type {self.copula_type} successfully")
