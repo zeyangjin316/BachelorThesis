@@ -93,11 +93,9 @@ class TwoStepModel:
         return df.dropna(axis=1)
 
     def _fit_copula(self, input_matrix: pd.DataFrame):
-        logger.info(f"Fit copula of type: {self.copula_type}")
-        copula_estimator = CopulaEstimator(
-            method=self.copula_type,
-        )
-        print(input_matrix.var())
+        logger.info(f"Fitting copula of type: {self.copula_type}")
+        copula_estimator = CopulaEstimator(self.copula_type)
+        #print(input_matrix.var())
         copula_estimator.fit(input_matrix)
         self.fitted_copula = copula_estimator.fitted_copula
         logger.info(f"Fitted copula of type {self.copula_type} successfully")
