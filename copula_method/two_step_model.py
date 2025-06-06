@@ -24,23 +24,24 @@ class TwoStepModel:
 
         # Collecting and splitting data
         self.split_point = split_point
-        self.reader = Reader()
         self.data_handler = DataHandler(split_point)
-        self.train_set, self.test_set = self.data_handler.get_train_test_data()
+        self.full_data = self.data_handler.get_data(split=False)
+        self.train_set, self.test_set = self.data_handler.get_data(split=True)
 
         logger.info("Two-step model initialized")
 
 
     def fit(self):
         logger.info("Starting fitting two-step model")
+        test_dates = sorted(self.test_set['date'].unique()) # All dates from the test set
+        symbols = self.full_data['sym_root'].unique()       # All symbols in the full data set
 
         #Step 1: Fit univariate models
-        univariate_forecaster = UnivariateForecaster(self.train_set, self.univariate_type)
-        self.uv_samples = univariate_forecaster.generate_samples(self.train_set['sym_root'].unique(), self.n_samples)
+        univariate_forecaster = UnivariateForecaster(self.full_data, self.univariate_type, self.train_set)
+        uv_samples = univariate_forecaster.generate_uv_samples(test_dates, symbols, fixed_window=True)
 
         # Step 2: Create Gaussianized copula inputs
-        days = sorted(self.test_set['date'].unique())
-        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, self.uv_samples, days)
+        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, uv_samples, test_dates)
 
         # Step 3: Fit copula using the transformed data
         copula_estimator = CopulaEstimator(self.copula_type)

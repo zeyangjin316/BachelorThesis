@@ -59,8 +59,6 @@ class UnivariateModel():
         }
 
     def _sample_arma_garch(self, symbol, n_samples):
-        #TODO make a rolling window
-
         current_dir = os.path.dirname(os.path.abspath(__file__))
         r_script_path = os.path.join(current_dir, "arma_garch.R")
         r.source(r_script_path)

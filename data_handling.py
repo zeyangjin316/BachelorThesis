@@ -10,10 +10,16 @@ class DataHandler:
         self.reader = Reader()
         self.split_point = split_point
 
-    def get_train_test_data(self):
+    def get_data(self, split=True):
         self.reader.read_data()
         self.reader.merge_all()
-        return self.reader.split_data(self.split_point)
+        if split:
+            return self.reader.split_data(self.split_point)
+        else:
+            return self.reader.data
+
+
+
 
 class Reader:
     def __init__(self, base_path="data_for_kit.csv", ltv_path="LTV_History.csv", vix_path="VIX_History.csv"):
