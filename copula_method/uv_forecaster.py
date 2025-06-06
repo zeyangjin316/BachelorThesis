@@ -12,7 +12,7 @@ class UnivariateForecaster:
         self.full_data = data
         self.method = method
 
-    def generate_uv_samples(self, test_dates, symbols, n_samples=1000, fixed_window=True):
+    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True):
         """
         Generate multiple samples per symbol per test day, for use in copula input transformation.
 
@@ -81,13 +81,10 @@ class UnivariateForecaster:
         if fixed_window:
             window_size = self.train_set_len
             data_up_to_date = data_up_to_date.groupby('sym_root').tail(window_size)
-            logger.debug(f"Using fixed window of size {window_size} for day {date}")
-        else:
-            logger.debug(f"Using expanding window up to {date} (size {len(data_up_to_date)})")
 
         # Fit model on current window
         model = UnivariateModel(data_up_to_date, self.method)
-        model.fit()
+        model.fit(current_day=date)
 
         samples_for_day = {}
 

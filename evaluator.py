@@ -12,7 +12,7 @@ class ForecastEvaluator:
         """
         Evaluate the generated samples with Energy Score and Copula Energy Score.
         """
-        from scoring_rules_supp import es_sample, ces_sample
+        from scoring_rules_supp import es_sample
 
         test_dates = sorted(self.test_set['date'].unique())
         symbols = samples.columns.tolist()
@@ -21,7 +21,6 @@ class ForecastEvaluator:
         y_pred = samples.T.values[np.newaxis, :, :]  # shape (1, n_dim, n_samples)
 
         energy_scores = []
-        copula_energy_scores = []
 
         for date in tqdm(test_dates, desc="Evaluating test days"):
             test_day_data = self.test_set[self.test_set['date'] == date]
@@ -36,15 +35,11 @@ class ForecastEvaluator:
                 continue
 
             es = es_sample(y_true, y_pred)
-            ces = ces_sample(y_true, y_pred)
 
             energy_scores.append(es)
-            copula_energy_scores.append(ces)
 
         mean_es = np.mean(energy_scores)
-        mean_ces = np.mean(copula_energy_scores)
 
         logger.info(f"\nMean Energy Score: {mean_es:.6f}")
-        logger.info(f"Mean Copula Energy Score: {mean_ces:.6f}")
 
-        return mean_es, mean_ces
+        return mean_es

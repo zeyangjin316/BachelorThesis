@@ -57,7 +57,7 @@ class CopulaTransformer:
 
             for symbol in test_data_day['sym_root'].unique():
                 try:
-                    samples = uv_samples[symbol]
+                    samples = uv_samples[symbol][day]
                     X_dh = test_data_day[test_data_day['sym_root'] == symbol]['ret_crsp'].values[0]
 
                     u_dh = np.mean(samples <= X_dh)

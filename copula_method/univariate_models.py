@@ -3,7 +3,7 @@ import logging as log
 import numpy as np
 import os
 from tqdm import tqdm
-from rpy2.robjects import pandas2ri, r, numpy2ri
+from rpy2.robjects import pandas2ri, r
 from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
 
 rpy2_logger.setLevel(log.ERROR)
@@ -74,16 +74,35 @@ class UnivariateModel():
         residual_std = model['residual_std']
         return np.random.normal(loc=y_pred, scale=residual_std, size=n_samples)
 
-    def fit(self):
-        """Train univariate models for all symbols"""
-        log.info(f"Fitting {self.method} models for all symbols")
+    def fit(self, current_day=None):
+        """
+        Train univariate models for all symbols in the data.
+
+        For each symbol in self.data['sym_root']:
+        - A univariate model of the chosen type (ARMAGARCH or LASSO) is fitted to the data for that symbol.
+        - The fitted models are stored in self.fitted_models:
+            self.fitted_models[symbol] → dict with fitted model components.
+
+        Parameters
+        ----------
+        current_day : str or pd.Timestamp, optional
+            If provided, will log which test day this model is being fitted for (for rolling window scenarios).
+
+        Returns
+        -------
+        None
+        """
+        #if current_day is not None:
+        #    tqdm.write(f"[INFO] Fitting univariate models for test day {current_day}")
+        #else:
+        #    tqdm.write(f"[INFO] Fitting univariate models for all symbols")
 
         def train_model(symbol):
-            #tqdm.write(f"Fitting model for symbol: {symbol}")  # Clean log under tqdm
             symbol_data = self.data[self.data['sym_root'] == symbol]
 
             try:
                 if self.method == "ARMAGARCH":
+                    log.info(f" Completed training {self.method} model for symbol {symbol} on day {current_day}")
                     model = self._fit_arma_garch(symbol_data['ret_crsp'])
                 elif self.method == "LASSO":
                     model = self._fit_lasso(symbol_data)
@@ -91,16 +110,20 @@ class UnivariateModel():
                     raise ValueError(f"Unsupported method: {self.method}")
                 return model
             except Exception as e:
-                tqdm.write(f"[ERROR] Failed to fit model for {symbol}: {e}")
+                log.error(f"[ERROR] Failed to fit model for {symbol}: {e}")
                 return None
 
         symbols = self.data['sym_root'].unique()
-        self.fitted_models = {
-            symbol: model for symbol in tqdm(symbols, desc="Fitting univariate models")
-            if (model := train_model(symbol)) is not None
-        }
 
-        log.info(f"Completed process for {len(self.fitted_models)} symbols")
+        fitted_models = {}
+        for symbol in symbols:
+            model = train_model(symbol)
+            if model is not None:
+                fitted_models[symbol] = model
+
+        self.fitted_models = fitted_models
+
+
 
 
     def sample(self, symbol: str, n_samples: int = 1000):
