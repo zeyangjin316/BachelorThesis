@@ -10,14 +10,11 @@ rpy2_logger.setLevel(log.ERROR)
 
 class UnivariateModel():
     def __init__(self, data: pd.DataFrame, method: str = "ARMAGARCH"):
-        log.info(f"Initializing {method} model")
         self.data = data
         self.method = method
         self.fitted_models = {}
-        log.info(f"{method} model initialized")
 
     def _fit_arma_garch(self, time_series):
-        """Fit ARMA-GARCH model to time series"""
         pandas2ri.activate()
 
         # Convert to R format
@@ -62,6 +59,8 @@ class UnivariateModel():
         }
 
     def _sample_arma_garch(self, symbol, n_samples):
+        #TODO make a rolling window
+
         current_dir = os.path.dirname(os.path.abspath(__file__))
         r_script_path = os.path.join(current_dir, "arma_garch.R")
         r.source(r_script_path)
@@ -103,7 +102,7 @@ class UnivariateModel():
             if (model := train_model(symbol)) is not None
         }
 
-        log.info(f"Completed training for {len(self.fitted_models)} symbols")
+        log.info(f"Completed process for {len(self.fitted_models)} symbols")
 
 
     def sample(self, symbol: str, n_samples: int = 1000):

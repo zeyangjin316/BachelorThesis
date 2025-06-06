@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class CopulaTransformer:
     @staticmethod
     def to_gaussian_input(test_set, uv_samples, days):
+        logger.info("Calculating Gaussian copula input matrix")
         matrix = []
 
         for day in tqdm(days, desc="Computing copula inputs"):

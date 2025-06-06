@@ -2,7 +2,6 @@ import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
 from scipy.stats import norm
 from datetime import datetime
 from typing import Union
@@ -10,7 +9,7 @@ from copula_method.uv_forecaster import UnivariateForecaster
 from copula_method.copula_fitting import CopulaEstimator
 from copula_method.copula_helpers import CopulaTransformer
 from evaluator import ForecastEvaluator
-from reader import Reader
+from data_handling import Reader, DataHandler
 
 logger = logging.getLogger(__name__)
 
@@ -19,25 +18,17 @@ class TwoStepModel:
                  univariate_type: str = "ARMAGARCH", copula_type: str ="Gaussian",
                  n_samples: int = 1000):
         logger.info("Initializing two-step model")
-        self.reader = Reader()
-        self.split_point = split_point
-        self.train_set = pd.DataFrame()
-        self.test_set = pd.DataFrame()
         self.univariate_type = univariate_type
         self.copula_type = copula_type
         self.n_samples = n_samples
-        self._build()
+
+        # Collecting and splitting data
+        self.split_point = split_point
+        self.reader = Reader()
+        self.data_handler = DataHandler(split_point)
+        self.train_set, self.test_set = self.data_handler.get_train_test_data()
+
         logger.info("Two-step model initialized")
-
-    def _build(self) -> None:
-        logger.info("Trying to fetch data")
-        self.reader.read_data()
-        self.reader.merge_all()
-        logger.info("Data fetched successfully")
-
-        logger.info("Starting data splitting")
-        self.train_set, self.test_set = self.reader.split_data(self.split_point)
-        logger.info("Data splitting completed")
 
 
     def fit(self):
@@ -45,17 +36,18 @@ class TwoStepModel:
 
         #Step 1: Fit univariate models
         univariate_forecaster = UnivariateForecaster(self.train_set, self.univariate_type)
-        uv_samples = univariate_forecaster.generate_samples(self.train_set['sym_root'].unique(), self.n_samples)
+        self.uv_samples = univariate_forecaster.generate_samples(self.train_set['sym_root'].unique(), self.n_samples)
 
         # Step 2: Create Gaussianized copula inputs
         days = sorted(self.test_set['date'].unique())
-        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, uv_samples, days)
+        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_set, self.uv_samples, days)
 
         # Step 3: Fit copula using the transformed data
         copula_estimator = CopulaEstimator(self.copula_type)
-        # print(input_matrix.var())
+            # print(input_matrix.var())
         copula_estimator.fit(gaussian_copula_input)
         self.fitted_copula = copula_estimator.fitted_copula
+
         logger.info("Finished fitting two-step model")
 
     def sample(self, n_trajectories: int = 1000):
@@ -91,7 +83,7 @@ class TwoStepModel:
 
         for symbol in symbols:
             logger.info(f"Inverting marginal forecast for {symbol}")
-            forecast_samples = np.sort(self.univariate_models.sample(symbol, self.n_samples))
+            forecast_samples = np.sort(self.uv_samples[symbol])
             percentiles = np.linspace(0, 1, len(forecast_samples))
             # Interpolate each u to its quantile value
             final_samples[symbol] = np.interp(u_samples[symbol], percentiles, forecast_samples)

@@ -1,6 +1,6 @@
 import logging
 from copula_method.two_step_model import TwoStepModel
-from reader import Reader
+from data_handling import Reader
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -17,10 +17,10 @@ def main():
     # Initialize and run the model
     test = TwoStepModel(n_samples=1000)
     test.fit()
-    #samples = test.sample()
+    samples = test.sample()
     #print(samples.head(10))
     #print(samples.tail(10))
-    #test.evaluate_energy_score(samples)
+    test.evaluate(samples)
 
 if __name__ == "__main__":
     main()
