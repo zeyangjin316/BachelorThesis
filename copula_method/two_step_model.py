@@ -9,7 +9,7 @@ from copula_method.uv_forecaster import UnivariateForecaster
 from copula_method.copula_fitting import CopulaEstimator
 from copula_method.copula_helpers import CopulaTransformer
 from evaluator import ForecastEvaluator
-from data_handling import Reader, DataHandler
+from data_handling import DataHandler
 
 logger = logging.getLogger(__name__)
 

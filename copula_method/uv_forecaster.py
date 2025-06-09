@@ -1,10 +1,30 @@
 import logging
 import numpy as np
 import pandas as pd
+import multiprocessing
+import joblib
+from tqdm.auto import tqdm
 from tqdm import tqdm
 from copula_method.univariate_models import UnivariateModel
+from joblib import Parallel, delayed
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+@contextmanager
+def tqdm_joblib(tqdm_object):
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
 
 class UnivariateForecaster:
     def __init__(self, data, method, train_set):
@@ -60,12 +80,28 @@ class UnivariateForecaster:
         """
         uv_samples = {symbol: {} for symbol in symbols}
 
-        for date in tqdm(test_dates, desc="Generating UV samples for copula input"):
-            samples_for_day = self._generate_samples_for_day(date, symbols, n_samples, fixed_window)
+        num_cores = multiprocessing.cpu_count()
+        logger.info(f"Using {num_cores} cores for parallel UV sample generation.")
 
+        logger.info("Starting parallel UV sample generation...")
+
+        def process_one_day(date):
+            logger.info(f"Processing test day {date} ...")
+            samples = self._generate_samples_for_day(date, symbols, n_samples, fixed_window)
+            return date, samples
+
+        # Run parallel loop with tqdm progress bar
+        with tqdm_joblib(tqdm(desc="Generating UV samples", total=len(test_dates))) as progress_bar:
+            parallel_results = Parallel(n_jobs=-1)(
+                delayed(process_one_day)(date) for date in test_dates
+            )
+
+        # Collect results
+        for date, samples in parallel_results:
             for symbol in symbols:
-                uv_samples[symbol][date] = samples_for_day.get(symbol, np.array([]))
+                uv_samples[symbol][date] = samples.get(symbol, np.array([]))
 
+        logger.info("Finished parallel UV sample generation.")
         logger.info("Generated uv_samples ready for PIT computation.")
         return uv_samples
 
