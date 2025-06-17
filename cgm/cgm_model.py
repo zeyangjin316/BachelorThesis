@@ -16,14 +16,16 @@ class ShapeLayer(Layer):
 
 class SampleLayer(Layer):
     def __init__(self, latent_dist="normal", **kwargs):
-        super(SampleLayer, self).__init__(*kwargs)
+        super(SampleLayer, self).__init__(**kwargs)
         self.latent_dist = latent_dist
     def call(self, inputs):
         bs, dim1, dim2 = inputs
         if self.latent_dist == "uniform":
             epsilon = tf.random.uniform(shape=(bs, dim1, dim2), minval=-1.0,  maxval=1.0)
         elif self.latent_dist == "normal":
-            epsilon = tf.random.normal(shape=(bs, dim1, dim2), mean=0.0, stddev=1.0)        
+            epsilon = tf.random.normal(shape=(bs, dim1, dim2), mean=0.0, stddev=1.0)
+        else:
+            epsilon = None
         return epsilon
 
 # define energy score

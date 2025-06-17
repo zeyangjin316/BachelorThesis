@@ -1,5 +1,4 @@
 import logging
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -7,85 +6,85 @@ from typing import Union
 
 from data_handling import DataHandler
 from evaluator import ForecastEvaluator
-
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-from cgm_model import cgm
+from cgm.data_prep import prepare_cgm_inputs
+from cgm.cgm_model import cgm
 
 logger = logging.getLogger(__name__)
+
 
 class CGMModel:
     def __init__(self, split_point: Union[float, datetime] = 0.8, loss_type: str = "ES"):
         logger.info("Initializing CGM model")
-
-        # Store configuration
         self.split_point = split_point
         self.loss_type = loss_type
 
-        # Load data via DataHandler (same as TwoStepModel)
-        self.data_handler = DataHandler(split_point)
-        self.full_data = self.data_handler.get_data(split=False)
-        self.train_set, self.test_set = self.data_handler.get_data(split=True)
-
-        # Placeholder for trained model(s)
-        self.cgm_model = None
-        self.ensemble_models = []
+        # Collecting and splitting data
+        self.data_dict = self._get_data()
+        self.full_data = self.data_dict['full_data']
+        self.train_data = self.data_dict['train_set']
+        self.test_data = self.data_dict['test_set']
 
         logger.info("CGM model initialized")
 
-    def fit(self, n_epochs: int = 100, batch_size: int = 1024, ensemble_size: int = 10):
+    def _get_data(self):
+        data_handler = DataHandler(self.split_point)
+        full_data = data_handler.get_data(split=False)
+        train_set, test_set = data_handler.get_data(split=True)
+        with pd.option_context('display.max_columns', None):
+            print(full_data.head())
+        return {'full_data': full_data, 'train_set': train_set, 'test_set': test_set, 'split_point': self.split_point, }
+
+    def fit(self, n_epochs: int = 100, batch_size: int = 1024):
         logger.info("Starting CGM model training")
 
-        # For each ensemble member:
-        for i in range(ensemble_size):
-            logger.info(f"Training CGM ensemble member {i+1}/{ensemble_size}")
+        X_past, X_std, X_all, X_weekday, Y = prepare_cgm_inputs(self.train_data)
 
-            # Initialize CGM model (replace with your function or class)
-            model = cgm(loss_type=self.loss_type)
+        dim_out = Y.shape[1]
+        dim_in_past = X_past.shape[2]
+        dim_in_features = X_all.shape[1]
 
-            # Compile with optimizer and loss (energy score or custom)
-            model.compile(optimizer=Adam(learning_rate=1e-4))
+        self.cgm_model = cgm(
+            dim_out=dim_out,
+            dim_in_features=dim_in_features,
+            dim_in_past=dim_in_past,
+            dim_latent=50,
+            n_samples_train=100
+        )
 
-            # Prepare training data (you will implement this part)
-            X_train, Y_train = self.prepare_training_data()
-
-            # Fit the model
-            model.fit(X_train, Y_train, epochs=n_epochs, batch_size=batch_size)
-
-            # Store trained model
-            self.ensemble_models.append(model)
+        self.cgm_model.fit(
+            x=[X_past, X_std, X_all, X_weekday],
+            y=Y,
+            batch_size=batch_size,
+            epochs=n_epochs,
+            verbose=1
+        )
 
         logger.info("Finished training CGM model")
 
     def sample(self, n_samples: int = 1000):
-        logger.info(f"Generating {n_samples} multivariate samples using CGM")
+        logger.info(f"Generating {n_samples} samples from CGM")
 
-        # Placeholder: implement sampling from ensemble models
-        # Should return: array of (n_samples, path_length=10) samples
-        samples = []
+        X_past, X_std, X_all, X_weekday, _ = prepare_cgm_inputs(self.test_data)
 
-        for model in self.ensemble_models:
-            # Implement sampling logic per model
-            samples_model = self.generate_samples_from_model(model, n_samples)
-            samples.append(samples_model)
+        samples = self.cgm_model.predict(
+            x=[X_past, X_std, X_all, X_weekday],
+            n_samples=n_samples
+        )
 
-        # Combine all samples
-        combined_samples = np.concatenate(samples, axis=0)
-
-        logger.info("Finished generating samples")
-        return combined_samples
+        return samples  # shape: (n_days, 10, n_samples)
 
     def evaluate(self, samples):
-        logger.info("Evaluating CGM samples")
-
-        # Use your existing ForecastEvaluator
-        evaluator = ForecastEvaluator(self.test_set)
-        return evaluator.evaluate_energy_score(samples)
+        """
+        Evaluate the generated samples with Energy Score and Copula Energy Score.
+        """
+        logger.info(f"Evaluating cgm method")
+        evaluator = ForecastEvaluator(self.test_data, samples)
+        return evaluator.evaluate()
 
     def show_data(self):
-        for symbol in self.train_set['sym_root'].unique():
-            train_data = self.train_set[self.train_set['sym_root'] == symbol]
-            test_data = self.test_set[self.test_set['sym_root'] == symbol]
+        for symbol in self.train_data['sym_root'].unique():
+            train_data = self.train_data[self.train_data['sym_root'] == symbol]
+            test_data = self.test_data[self.test_data['sym_root'] == symbol]
 
             plt.figure(figsize=(10, 6))
             plt.plot(train_data['date'], train_data['ret_crsp'], label='Train', color='blue')
@@ -96,12 +95,4 @@ class CGMModel:
             plt.legend()
             plt.show()
 
-    # Placeholder methods to implement:
-    def prepare_training_data(self):
-        # You will implement this using your CGM input pipeline
-        pass
-
-    def generate_samples_from_model(self, model, n_samples):
-        # You will implement this using your CGM sampling logic
-        pass
 
