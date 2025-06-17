@@ -30,8 +30,8 @@ class CGMModel:
         data_handler = DataHandler(self.split_point)
         full_data = data_handler.get_data(split=False)
         train_set, test_set = data_handler.get_data(split=True)
-        with pd.option_context('display.max_columns', None):
-            print(full_data.head())
+        """with pd.option_context('display.max_columns', None):
+            print(full_data.head())"""
         return {'full_data': full_data, 'train_set': train_set, 'test_set': test_set, 'split_point': self.split_point, }
 
     def fit(self, n_epochs: int = 100, batch_size: int = 1024):

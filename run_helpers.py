@@ -5,7 +5,7 @@ from copula_method.two_step_model import TwoStepModel
 def run_cgm_experiment(
     split_point=0.8,
     loss_type='ES',
-    n_epochs=50,
+    n_epochs=10,
     batch_size=256,
     n_samples=100,
     fit_model=True,
@@ -24,13 +24,14 @@ def run_cgm_experiment(
 
     results = None
     if evaluate and samples is not None:
-        try:
+        results = model.evaluate(samples)
+        """try:
             results = model.evaluate(samples)
             print("CGM Evaluation Results:")
             for k, v in results.items():
                 print(f"{k}: {v:.4f}")
         except Exception as e:
-            print("CGM Evaluation skipped:", e)
+            print("CGM Evaluation skipped:", e)"""
 
     return samples, results
 
