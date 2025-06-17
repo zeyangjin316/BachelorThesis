@@ -30,6 +30,7 @@ class SampleLayer(Layer):
 
 # define energy score
 def energy_score(y_true, y_pred):
+
     """
     Computes energy score efficiently.
     Parameters
@@ -43,6 +44,7 @@ def energy_score(y_true, y_pred):
     tf tensor of shape (BATCH_SIZE,)
         Scores.
     """
+
     n_samples_model = tf.cast(tf.shape(y_pred)[2], dtype=tf.float32)
     
     es_12 = tf.reduce_sum(tf.sqrt(tf.clip_by_value(tf.matmul(y_true, y_true, 
@@ -75,7 +77,15 @@ class EnergyScore(Loss):
         super().__init__(name=name, **kwargs)
 
     def call(self, y_true, y_pred):
-        y_true_price = y_true[:, 1:, :]
+        y_true_price = y_true
+        """
+        else this happens if y_true gets sliced
+        === CGM Fit Debug ===
+        y_true input shape: (None, 10, 1)
+        y_pred shape: (None, 10, 100)
+        energy_score: y_true.shape = (None, 9, 1)
+        energy_score: y_pred.shape = (None, 10, 100)
+        """
         y_true_index = y_true[:, 0, :]
         ES = energy_score(y_true_price, y_pred)
         

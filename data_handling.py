@@ -1,7 +1,8 @@
-import pandas as pd
-import logging
 from datetime import datetime
 from typing import Union
+
+import pandas as pd
+import logging
 
 logger = logging.getLogger(__name__)
 

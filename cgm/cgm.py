@@ -67,7 +67,7 @@ class CGMModel:
         X_past, X_std, X_all, X_weekday, _ = prepare_cgm_inputs(self.test_data)
 
         samples = self.cgm_model.predict(
-            x=[X_past, X_std, X_all, X_weekday],
+            x_test=[X_past, X_std, X_all, X_weekday],
             n_samples=n_samples
         )
 
