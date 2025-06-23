@@ -1,9 +1,9 @@
 import logging
-import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Union
 
+from config import TARGET_VAR
 from data_handling import DataHandler
 from evaluator import ForecastEvaluator
 from cgm.data_prep import prepare_cgm_inputs
@@ -18,22 +18,16 @@ class CGMModel:
         self.split_point = split_point
         self.window_size = window_size
         self.loss_type = loss_type
+        self.data_handler = DataHandler(self.split_point)
 
         # Collecting and splitting data
-        self.data_dict = self._get_data()
+        self.data_dict = self.data_handler.get_data(standardize = True)
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
         self.test_data = self.data_dict['test_set']
 
         logger.info("CGM model initialized")
 
-    def _get_data(self):
-        data_handler = DataHandler(self.split_point)
-        full_data = data_handler.get_data(split=False)
-        train_set, test_set = data_handler.get_data(split=True)
-        """with pd.option_context('display.max_columns', None):
-            print(full_data.head())"""
-        return {'full_data': full_data, 'train_set': train_set, 'test_set': test_set, 'split_point': self.split_point, }
 
     def fit(self, n_epochs: int = 100, batch_size: int = 1024):
         logger.info("Starting CGM model training")
@@ -71,6 +65,8 @@ class CGMModel:
             x_test=[X_past, X_std, X_all, X_weekday],
             n_samples=n_samples
         )
+
+        self.data_handler.scaler.inverse_transform(samples, TARGET_VAR)
 
         return samples  # shape: (n_days, 10, n_samples)
 
