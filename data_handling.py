@@ -20,8 +20,6 @@ class DataHandler:
             return self.reader.data
 
 
-
-
 class Reader:
     def __init__(self, base_path="data_for_kit.csv", ltv_path="LTV_History.csv", vix_path="VIX_History.csv"):
         self.base_path = base_path

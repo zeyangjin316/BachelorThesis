@@ -15,10 +15,17 @@ from data_handling import DataHandler
 logger = logging.getLogger(__name__)
 
 class TwoStepModel:
-    def __init__(self, split_point: Union[float, datetime] = 0.8, univariate_type: str = "ARMAGARCH", copula_type: str ="Gaussian",):
+    def __init__(self,
+                 split_point: Union[float, datetime] = 0.8,
+                 fixed_window: bool = True,
+                 window_size: int = 7,
+                 univariate_type: str = "ARMAGARCH",
+                 copula_type: str ="Gaussian"):
 
         logger.info("Initializing two-step model")
         self.split_point = split_point
+        self.fixed_window = fixed_window
+        self.window_size = window_size
         self.univariate_type = univariate_type
         self.copula_type = copula_type
 
@@ -36,7 +43,7 @@ class TwoStepModel:
         train_set, test_set = data_handler.get_data(split=True)
         """with pd.option_context('display.max_columns', None):
             print(full_data.head())"""
-        return {'full_data': full_data, 'train_set': train_set, 'test_set': test_set, 'split_point': self.split_point,}
+        return {'full_data': full_data, 'train_set': train_set, 'test_set': test_set}
 
 
     def fit(self, n_samples_daily = 100):
@@ -44,28 +51,35 @@ class TwoStepModel:
         test_dates = sorted(self.test_data['date'].unique()) # All dates from the test set
         symbols = self.full_data['sym_root'].unique()       # All symbols in the full data set
 
-        #Step 1: Fit univariate models
+        #Step 1: Generate univariate samples for all days in the test set
         univariate_forecaster = UnivariateForecaster(self.full_data, self.univariate_type, self.train_data)
-        self.uv_samples = univariate_forecaster.generate_uv_samples(test_dates, symbols,n_samples=n_samples_daily, fixed_window=True)
+        self.uv_samples = univariate_forecaster.generate_uv_samples(test_dates, symbols,n_samples=n_samples_daily,
+                                                                    fixed_window=True, window_size=self.window_size)
 
-        # Step 2: Create Gaussianized copula inputs
-        gaussian_copula_input = CopulaTransformer.to_gaussian_input(self.test_data, self.uv_samples, test_dates)
+        # Step 2: Transform samples into copula input
+        if self.copula_type == "Gaussian":
+            copula_input_matrix = CopulaTransformer.to_gaussian_input(self.test_data, self.uv_samples, test_dates)
+        else:
+            copula_input_matrix = None
 
         # Step 3: Fit copula using the transformed data
         copula_estimator = CopulaEstimator(self.copula_type)
-        copula_estimator.fit(gaussian_copula_input)
+        copula_estimator.fit(copula_input_matrix)
         self.fitted_copula = copula_estimator.fitted_copula
 
         logger.info("Finished fitting two-step model")
 
-    def sample(self, n_trajectories: int = 1000):
+        return copula_estimator.fitted_copula
+
+
+    def sample(self, n_samples: int = 1000):
         """
         Generate joint return samples from the fitted copula and marginal forecast distributions.
 
         Returns:
             pd.DataFrame: shape = (n_trajectories, n_symbols)
         """
-        logger.info(f"Sampling {n_trajectories} multivariate scenarios from copula")
+        logger.info(f"Sampling {n_samples} multivariate scenarios from copula")
 
         # Safety check
         if not self.fitted_copula:
@@ -80,14 +94,14 @@ class TwoStepModel:
             'sym_root'].unique().tolist()
 
         # Step 1: Sample from copula in Gaussian space
-        z_samples = copula_model.sample(n_trajectories)
+        z_samples = copula_model.sample(n_samples)
         z_samples.columns = symbols
 
         # Step 2: Gaussian → Uniform space
         u_samples = pd.DataFrame(norm.cdf(z_samples), columns=symbols)
 
         # Step 3: Invert marginal distributions using concatenated univariate samples
-        final_samples = pd.DataFrame(index=range(n_trajectories), columns=symbols)
+        final_samples = pd.DataFrame(index=range(n_samples), columns=symbols)
 
         for symbol in symbols:
             logger.info(f"Inverting marginal forecast for {symbol}")

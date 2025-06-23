@@ -32,7 +32,7 @@ class UnivariateForecaster:
         self.full_data = data
         self.method = method
 
-    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True):
+    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True, window_size=7):
         """
         Generate multiple samples per symbol per test day, for use in copula input transformation.
 

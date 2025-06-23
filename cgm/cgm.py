@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 class CGMModel:
-    def __init__(self, split_point: Union[float, datetime] = 0.8, loss_type: str = "ES"):
+    def __init__(self, split_point: Union[float, datetime] = 0.8, window_size: int = 7, loss_type: str = "ES"):
         logger.info("Initializing CGM model")
         self.split_point = split_point
+        self.window_size = window_size
         self.loss_type = loss_type
 
         # Collecting and splitting data

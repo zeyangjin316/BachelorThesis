@@ -38,7 +38,7 @@ def run_cgm_experiment(
 
 # === Two-Step Experiment Helper ===
 def run_two_step_experiment(
-    split_point=0.8,
+    split_point=0.99,
     uv_method="ARMAGARCH",
     copula_type="Gaussian",
     fit_model=True,
@@ -48,11 +48,11 @@ def run_two_step_experiment(
     model = TwoStepModel(split_point=split_point, univariate_type=uv_method, copula_type=copula_type)
 
     if fit_model:
-        model.fit()
+        model.fit(n_samples_daily=100)
 
     samples = None
     if sample_model:
-        samples = model.sample()
+        samples = model.sample(n_samples=100)
         print("Sampled Two-Step forecast shape:", samples.shape)
 
     results = None
