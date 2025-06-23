@@ -31,7 +31,7 @@ class Reader:
         self.vix_data = None
         self.data = None  # Final merged data
 
-    def _get_data(self, file_path: str) -> pd.DataFrame:
+    def _read_from(self, file_path: str) -> pd.DataFrame:
         """Helper to read a CSV file safely."""
         try:
             return pd.read_csv(file_path)
@@ -58,9 +58,9 @@ class Reader:
     def read_data(self) -> None:
         """Read base, LTV, and VIX data from CSV files."""
         logger.info("Reading CSV files")
-        self.base_data = self._get_data(self.base_path)
-        self.ltv_data = self._get_data(self.ltv_path)
-        self.vix_data = self._get_data(self.vix_path)
+        self.base_data = self._read_from(self.base_path)
+        self.ltv_data = self._read_from(self.ltv_path)
+        self.vix_data = self._read_from(self.vix_path)
 
     def merge_all(self) -> None:
         """Merge LTV and VIX data into base_data, store result in self.data."""
