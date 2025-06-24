@@ -1,14 +1,14 @@
 import logging
-import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import norm
 from datetime import datetime
 from typing import Union
 
+from scipy.stats import norm
+from tqdm import tqdm
+
 from copula_method.uv_forecaster import UnivariateForecaster
-from copula_method.copula_fitting import CopulaEstimator
-from copula_method.copula_helpers import CopulaTransformer
+from copula_method.copula_fitting import CopulaFitter
 from evaluator import ForecastEvaluator
 from data_handling import DataHandler
 
@@ -17,17 +17,17 @@ logger = logging.getLogger(__name__)
 class TwoStepModel:
     def __init__(self,
                  split_point: Union[float, datetime] = 0.8,
-                 fixed_window: bool = True,
+                 fixed_uv_window: bool = True,
                  uv_train_freq: int = 1,
-                 copula_train_freq: int = 1,
+                 copula_window_size: float = 0.05,
                  univariate_type: str = "ARMAGARCH",
                  copula_type: str ="Gaussian"):
 
         logger.info("Initializing two-step model")
         self.split_point = split_point
-        self.fixed_window = fixed_window
+        self.fixed_uv_window = fixed_uv_window
         self.uv_train_freq = uv_train_freq
-        self.copula_train_freq = copula_train_freq
+        self.copula_window_size = copula_window_size
         self.univariate_type = univariate_type
         self.copula_type = copula_type
         self.data_handler = DataHandler(self.split_point)
@@ -36,56 +36,69 @@ class TwoStepModel:
         self.data_dict = self.data_handler.get_data()
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
-        self.test_data = self.data_dict['test_set']
+        self.test_data = self.data_dict['test_set'] # the first day included in PIT computation
 
         logger.info("Two-step model initialized")
 
-
-    def fit(self, n_samples_per_day = 100):
+    def fit(self, n_samples_per_day=100):
         logger.info("Starting fitting two-step model")
-        test_dates = sorted(self.test_data['date'].unique())  # All dates from the test set
-        symbols = self.full_data['sym_root'].unique()  # All symbols in the full data set
 
-        # Step 1: Generate univariate samples for all days in the test set
+        # === Define symbol list ===
+        symbols = sorted(self.full_data['sym_root'].unique())
+
+        # === Define copula calibration window ===
+        train_dates = sorted(self.train_data['date'].unique())
+        copula_window_days = int(len(train_dates) * self.copula_window_size)
+        self.copula_start_date = train_dates[-copula_window_days]  # rolling window starts here
+
+        logger.info(f"Copula calibration window starts at {self.copula_start_date} ({copula_window_days} days)")
+
+        # === Define univariate forecast dates ===
+        # Must cover the copula window + test set
+        uv_forecast_dates = sorted(self.full_data[self.full_data['date'] >= self.copula_start_date]['date'].unique())
+        logger.info(
+            f"Generating univariate samples for {len(uv_forecast_dates)} days starting from {uv_forecast_dates[0]}")
+
+        # === Generate univariate forecast samples ===
         univariate_forecaster = UnivariateForecaster(
-            self.full_data,
-            self.univariate_type,
-            self.train_data
+            data=self.full_data,
+            method=self.univariate_type,
+            train_set=self.train_data
         )
         self.uv_samples = univariate_forecaster.generate_uv_samples(
-            test_dates,
-            symbols,
+            test_dates=uv_forecast_dates,
+            symbols=symbols,
             n_samples=n_samples_per_day,
-            fixed_window=True,
+            fixed_window=self.fixed_uv_window,
             freq=self.uv_train_freq
         )
 
-        # Step 2: Fit copula every copula_train_freq days
-        self.copulas_by_day = {}
-        for i, current_day in enumerate(test_dates):
-            if i % self.copula_train_freq == 0:
-                logger.info(f"Fitting copula for day {current_day}")
-                copula_input_matrix = CopulaTransformer.to_gaussian_input(
-                                                            test_set=self.test_data,
-                                                            uv_samples=self.uv_samples,
-                                                            days=[current_day]
-                                                        )
-                copula_estimator = CopulaEstimator(self.copula_type)
-                copula_estimator.fit(copula_input_matrix)
-                self.fitted_copula = copula_estimator.fitted_copula
-            else:
-                logger.info(f"Reusing copula from previous day for {current_day}")
-            self.copulas_by_day[current_day] = self.fitted_copula
+        # === Fit rolling copulas using PITs and Z-vectors ===
+        test_dates = sorted(self.test_data['date'].unique())
+        self.copula_fitter = CopulaFitter(
+            copula_type=self.copula_type,
+            rolling_window_size=copula_window_days
+        )
+        copula_data = self.full_data[self.full_data['date'] >= self.copula_start_date]
+
+        self.copula_fitter.calc_all_matrices(
+            full_data=copula_data,
+            uv_samples=self.uv_samples,
+            symbols=symbols,
+            test_dates=test_dates
+        )
+
+        logger.info("Two-step model fitting complete")
 
     def sample(self, n_samples: int = 1000) -> np.ndarray:
         """
         Generate daily joint return samples from the copula and marginal forecasts.
 
-        Returns:
-            np.ndarray of shape (n_days, n_symbols, n_samples)
+        Returns
+        -------
+        np.ndarray
+            Shape (n_days, n_symbols, n_samples)
         """
-        from scipy.stats import norm
-
         logger.info(f"Sampling {n_samples} multivariate scenarios per day")
 
         test_dates = sorted(self.test_data['date'].unique())
@@ -95,40 +108,40 @@ class TwoStepModel:
 
         all_day_samples = np.full((n_days, n_symbols, n_samples), np.nan)
 
-        for day_idx, current_day in enumerate(test_dates):
-            logger.info(f"Sampling for day {current_day}")
+        with tqdm(test_dates, desc="Sampling Copula Forecasts", leave=False) as pbar:
+            for day_idx, current_day in enumerate(pbar):
+                pbar.set_description(f"Sampling {current_day.date()}")
 
-            # Get copula
-            copula = self.copulas_by_day.get(current_day)
-            if copula is None:
-                logger.warning(f"No copula fitted for {current_day}; skipping")
-                continue
+                # === Step 1: Get copula correlation matrix ===
+                corr_matrix = self.copula_fitter.get_corr_matrix(current_day)
+                if corr_matrix is None:
+                    logger.warning(f"No copula fitted for {current_day}; skipping")
+                    continue
 
-            # Sample from copula in Gaussian space
-            if not hasattr(copula, "sample"):
-                logger.warning(f"Copula for {current_day} has no sample method; skipping")
-                continue
-
-            try:
-                z_samples = copula.sample(n_samples)
-                z_samples.columns = symbols
-                u_samples = pd.DataFrame(norm.cdf(z_samples), columns=symbols)
-            except Exception as e:
-                logger.warning(f"Failed copula sampling for {current_day}: {e}")
-                continue
-
-            for s_idx, symbol in enumerate(symbols):
                 try:
-                    all_symbol_samples = np.concatenate([
-                        self.uv_samples[symbol][day] for day in self.uv_samples[symbol]
-                    ])
-                    sorted_samples = np.sort(all_symbol_samples)
-                    percentiles = np.linspace(0, 1, len(sorted_samples))
-                    all_day_samples[day_idx, s_idx, :] = np.interp(
-                        u_samples[symbol], percentiles, sorted_samples
-                    )
+                    # === Step 2: Sample from Gaussian copula ===
+                    mean = np.zeros(n_symbols)
+                    z_samples = np.random.multivariate_normal(mean, corr_matrix, size=n_samples).T
+
+                    # === Step 3: Gaussian → Uniform space ===
+                    u_samples = norm.cdf(z_samples)
                 except Exception as e:
-                    logger.warning(f"Failed marginal inversion for {symbol} on {current_day}: {e}")
+                    logger.warning(f"Failed copula sampling for {current_day}: {e}")
+                    continue
+
+                # === Step 4: Invert marginals for each symbol ===
+                for s_idx, symbol in enumerate(symbols):
+                    try:
+                        all_symbol_samples = np.concatenate([
+                            self.uv_samples[day][symbol] for day in self.uv_samples if symbol in self.uv_samples[day]
+                        ])
+                        sorted_samples = np.sort(all_symbol_samples)
+                        percentiles = np.linspace(0, 1, len(sorted_samples))
+                        all_day_samples[day_idx, s_idx, :] = np.interp(
+                            u_samples[s_idx], percentiles, sorted_samples
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed marginal inversion for {symbol} on {current_day}: {e}")
 
         logger.info("Finished multiday copula sampling.")
         return all_day_samples

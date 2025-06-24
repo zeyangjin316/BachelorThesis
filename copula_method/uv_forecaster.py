@@ -4,7 +4,7 @@ import pandas as pd
 import joblib
 from tqdm.auto import tqdm
 from tqdm import tqdm
-from copula_method.univariate_models import UnivariateModel
+from copula_method.uv_models import UnivariateModel
 from joblib import Parallel, delayed
 from contextlib import contextmanager
 
@@ -54,17 +54,17 @@ class UnivariateForecaster:
 
         Returns
         -------
-        dict[str, dict[pd.Timestamp, np.ndarray]]
-            Forecast samples: uv_samples[symbol][day] → np.array of shape (n_samples,)
+        dict[pd.Timestamp, dict[str, np.ndarray]]
+            Forecast samples: uv_samples[day][symbol] → np.array of shape (n_samples,)
 
         Notes
         -----
         Intended for copula input transformation using PIT and Gaussianization.
         """
-        uv_samples = {symbol: {} for symbol in symbols}
+        uv_samples = {}
         last_model = None
 
-        logger.info("Generating UV samples with model reuse every {} days".format(freq))
+        logger.info("Generating UV samples with model refit every {} days".format(freq))
 
         for i, date in enumerate(tqdm(test_dates, desc="Generating UV samples")):
             logger.info(f"Processing test day {date} ...")
@@ -95,8 +95,7 @@ class UnivariateForecaster:
                 delayed(sample_one_symbol)(symbol) for symbol in symbols
             )
 
-            for symbol, samples in symbol_samples:
-                uv_samples[symbol][date] = samples
+            uv_samples[date] = {symbol: samples for symbol, samples in symbol_samples}
 
         logger.info("Finished parallel UV sample generation.")
         logger.info("Generated uv_samples ready for PIT computation.")

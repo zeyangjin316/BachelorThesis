@@ -40,7 +40,7 @@ def main():
         samples_two_step, results_two_step = run_two_step_experiment(
             split_point=0.99,
             uv_train_freq=7,
-            copula_train_freq=1,
+            copula_window_size=0.005,
             uv_method="ARMAGARCH",
             copula_type="Gaussian",
             fit_model=True,

@@ -7,5 +7,5 @@ def test_fit_copula_from_transformed_data():
         "TSLA": [0.5, -0.1, 0.0]
     })
     estimator = CopulaEstimator(method="Gaussian")
-    estimator.fit(df)
+    estimator.calc_all_matrices(df)
     assert estimator.fitted_copula is not None

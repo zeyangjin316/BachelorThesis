@@ -41,7 +41,7 @@ def run_cgm_experiment(
 def run_two_step_experiment(
     split_point=0.99,
     uv_train_freq=1,
-    copula_train_freq=1,
+    copula_window_size=0.05,
     uv_method="ARMAGARCH",
     copula_type="Gaussian",
     fit_model=True,
@@ -49,7 +49,7 @@ def run_two_step_experiment(
     evaluate=True
 ):
     model = TwoStepModel(split_point=split_point,
-                         uv_train_freq=uv_train_freq, copula_train_freq=copula_train_freq,
+                         uv_train_freq=uv_train_freq, copula_window_size=copula_window_size,
                          univariate_type=uv_method, copula_type=copula_type)
 
     if fit_model:
