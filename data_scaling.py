@@ -41,6 +41,7 @@ class SmartScaler:
         return df_transformed
 
     def inverse_transform(self, variable: str, data):
+
         scaler = self.scalers.get(variable)
         if scaler is None:
             return data  # No transform was originally applied

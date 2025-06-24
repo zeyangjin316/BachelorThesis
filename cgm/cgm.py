@@ -66,7 +66,7 @@ class CGMModel:
             n_samples=n_samples
         )
 
-        self.data_handler.scaler.inverse_transform(samples, TARGET_VAR)
+        self.data_handler.scaler.inverse_transform(TARGET_VAR, samples)
 
         return samples  # shape: (n_days, 10, n_samples)
 

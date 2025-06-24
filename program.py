@@ -39,7 +39,8 @@ def main():
         print("\n=== Running Two-Step Experiment ===")
         samples_two_step, results_two_step = run_two_step_experiment(
             split_point=0.99,
-            window_size=7,
+            uv_train_freq=7,
+            copula_train_freq=1,
             uv_method="ARMAGARCH",
             copula_type="Gaussian",
             fit_model=True,

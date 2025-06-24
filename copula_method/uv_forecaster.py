@@ -1,7 +1,6 @@
 import logging
 import numpy as np
 import pandas as pd
-import multiprocessing
 import joblib
 from tqdm.auto import tqdm
 from tqdm import tqdm
@@ -32,74 +31,72 @@ class UnivariateForecaster:
         self.full_data = data
         self.method = method
 
-    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True, window_size=7):
+    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True, freq=1):
         """
-        Generate multiple samples per symbol per test day, for use in copula input transformation.
+        Generate univariate forecast samples for each symbol and test day.
+
+        For each date:
+        - Refit the univariate model every `freq` days (reuse in between).
+        - Generate `n_samples` samples per symbol using the fitted model.
 
         Parameters
         ----------
         test_dates : list of str or pd.Timestamp
-            List of test dates for which to generate samples.
+            Dates to forecast.
         symbols : list of str
-            List of symbols to forecast.
-        n_samples : int, optional (default=1000)
+            Asset symbols to model.
+        n_samples : int
             Number of samples to generate per symbol per day.
-        fixed_window : bool, optional (default=True)
-            If True, use a fixed rolling window of size equal to the initial train set length.
-            If False, use an expanding window.
+        fixed_window : bool
+            Use a rolling window (True) or expanding window (False) for training data.
+        freq : int
+            Frequency (in days) to refit the univariate model.
 
         Returns
         -------
-        uv_samples : dict
-            Nested dictionary with the following structure:
-
-            uv_samples[symbol][day] → np.array of shape (n_samples,)
-
-            Example structure:
-
-            {
-                'MSFT': {
-                    '2020-01-01': np.array([sample1, sample2, ..., sampleN]),
-                    '2020-01-02': np.array([...]),
-                    ...
-                },
-                'AAPL': {
-                    '2020-01-01': np.array([...]),
-                    '2020-01-02': np.array([...]),
-                    ...
-                },
-                ...
-            }
+        dict[str, dict[pd.Timestamp, np.ndarray]]
+            Forecast samples: uv_samples[symbol][day] → np.array of shape (n_samples,)
 
         Notes
         -----
-        - This output is intended for use with CopulaTransformer.to_gaussian_input().
-        - The PIT (Probability Integral Transform) and Gaussianization are performed using the samples from uv_samples.
-        - Only ONE Z per symbol per day is computed and fed into the Gaussian copula.
-
+        Intended for copula input transformation using PIT and Gaussianization.
         """
         uv_samples = {symbol: {} for symbol in symbols}
+        last_model = None
 
-        num_cores = multiprocessing.cpu_count()
-        logger.info(f"Using {num_cores} cores for parallel UV sample generation.")
+        logger.info("Generating UV samples with model reuse every {} days".format(freq))
 
-        logger.info("Starting parallel UV sample generation...")
-
-        def process_one_day(date):
+        for i, date in enumerate(tqdm(test_dates, desc="Generating UV samples")):
             logger.info(f"Processing test day {date} ...")
-            samples = self._generate_samples_for_day(date, symbols, n_samples, fixed_window)
-            return date, samples
 
-        # Run parallel loop with tqdm progress bar
-        with tqdm_joblib(tqdm(desc="Generating UV samples", total=len(test_dates))) as progress_bar:
-            parallel_results = Parallel(n_jobs=-1)(
-                delayed(process_one_day)(date) for date in test_dates
+            # Decide whether to refit
+            if i % freq == 0:
+                logger.info(f"Fitting univariate model on day {date}")
+                data_up_to_date = self.full_data[self.full_data['date'] < date]
+                if fixed_window:
+                    window_size = self.train_set_len
+                    data_up_to_date = data_up_to_date.groupby('sym_root').tail(window_size)
+
+                last_model = UnivariateModel(data_up_to_date, self.method)
+                last_model.fit(current_day=date)
+            else:
+                logger.info(f"Reusing last fitted univariate model for {date}")
+
+            # Parallel sampling per symbol
+            def sample_one_symbol(symbol):
+                try:
+                    samples = last_model.sample(symbol, n_samples=n_samples)
+                    return symbol, samples
+                except Exception as e:
+                    logger.warning(f"Failed sampling {symbol} on {date}: {e}")
+                    return symbol, np.array([])
+
+            symbol_samples = Parallel(n_jobs=-1)(
+                delayed(sample_one_symbol)(symbol) for symbol in symbols
             )
 
-        # Collect results
-        for date, samples in parallel_results:
-            for symbol in symbols:
-                uv_samples[symbol][date] = samples.get(symbol, np.array([]))
+            for symbol, samples in symbol_samples:
+                uv_samples[symbol][date] = samples
 
         logger.info("Finished parallel UV sample generation.")
         logger.info("Generated uv_samples ready for PIT computation.")

@@ -40,17 +40,20 @@ def run_cgm_experiment(
 # === Two-Step Experiment Helper ===
 def run_two_step_experiment(
     split_point=0.99,
-    window_size=7,
+    uv_train_freq=1,
+    copula_train_freq=1,
     uv_method="ARMAGARCH",
     copula_type="Gaussian",
     fit_model=True,
     sample_model=True,
     evaluate=True
 ):
-    model = TwoStepModel(split_point=split_point, window_size=window_size, univariate_type=uv_method, copula_type=copula_type)
+    model = TwoStepModel(split_point=split_point,
+                         uv_train_freq=uv_train_freq, copula_train_freq=copula_train_freq,
+                         univariate_type=uv_method, copula_type=copula_type)
 
     if fit_model:
-        model.fit(n_samples_daily=100)
+        model.fit(n_samples_per_day=100)
 
     samples = None
     if sample_model:
