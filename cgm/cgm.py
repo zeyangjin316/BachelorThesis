@@ -6,76 +6,64 @@ from typing import Union
 from config import TARGET_VAR
 from data_handling import DataHandler
 from evaluator import ForecastEvaluator
-from cgm.data_prep import prepare_cgm_inputs
-from cgm.cgm_model import cgm
+from cgm import prepare_cgm_inputs
+from cgm import CGMTrainer
 
 logger = logging.getLogger(__name__)
 
 
 class CGMModel:
-    def __init__(self, split_point: Union[float, datetime] = 0.8, window_size: int = 7, loss_type: str = "ES"):
+    def __init__(self, split_point: Union[float, datetime] = 0.8, train_freq: int = 7, loss_type: str = "ES"):
         logger.info("Initializing CGM model")
         self.split_point = split_point
-        self.window_size = window_size
+        self.train_freq = train_freq
         self.loss_type = loss_type
         self.data_handler = DataHandler(self.split_point)
 
-        # Collecting and splitting data
-        self.data_dict = self.data_handler.get_data(standardize = True)
+        self.data_dict = self.data_handler.get_data(standardize=True)
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
         self.test_data = self.data_dict['test_set']
 
+        self.trained_models = {}
+
         logger.info("CGM model initialized")
 
-
     def fit(self, n_epochs: int = 100, batch_size: int = 1024):
-        logger.info("Starting CGM model training")
+        logger.info("Starting training CGM models")
 
-        X_past, X_std, X_all, X_weekday, Y = prepare_cgm_inputs(self.train_data)
+        cgm_trainer = CGMTrainer(train_data=self.full_data,
+                                 n_epochs=n_epochs,
+                                 batch_size=batch_size,
+                                 train_freq=self.train_freq)
 
-        dim_out = Y.shape[1]
-        dim_in_past = X_past.shape[2]
-        dim_in_features = X_all.shape[1]
+        self.trained_models = cgm_trainer.train_all()
 
-        self.cgm_model = cgm(
-            dim_out=dim_out,
-            dim_in_features=dim_in_features,
-            dim_in_past=dim_in_past,
-            dim_latent=50,
-            n_samples_train=100
-        )
+        logger.info("Finished training CGM models")
 
-        self.cgm_model.fit(
-            x=[X_past, X_std, X_all, X_weekday],
-            y=Y,
-            batch_size=batch_size,
-            epochs=n_epochs,
-            verbose=1
-        )
+    def sample(self, test_day: datetime, n_samples: int = 1000):
+        logger.info(f"Generating {n_samples} samples for {test_day}")
 
-        logger.info("Finished training CGM model")
+        model = self.trained_models.get(test_day)
+        if model is None:
+            raise ValueError(f"No trained model available for test day {test_day}")
 
-    def sample(self, n_samples: int = 1000):
-        logger.info(f"Generating {n_samples} samples from CGM")
+        test_data = self.test_data[self.test_data['date'] == test_day]
+        X_past, X_std, X_all, X_weekday, _ = prepare_cgm_inputs(test_data)
 
-        X_past, X_std, X_all, X_weekday, _ = prepare_cgm_inputs(self.test_data)
-
-        samples = self.cgm_model.predict(
+        samples = model.predict(
             x_test=[X_past, X_std, X_all, X_weekday],
             n_samples=n_samples
         )
 
         self.data_handler.scaler.inverse_transform(TARGET_VAR, samples)
+        return samples
 
-        return samples  # shape: (n_days, 10, n_samples)
+    def evaluate(self, test_day: datetime, samples):
+        logger.info(f"Evaluating CGM forecast for {test_day}")
 
-    def evaluate(self, samples):
-        """
-        Evaluate the generated samples with Energy Score and Copula Energy Score.
-        """
-        logger.info(f"Evaluating cgm method")
-        evaluator = ForecastEvaluator(self.test_data, samples)
+        actuals = self.test_data[self.test_data['date'] == test_day]
+        evaluator = ForecastEvaluator(actuals, samples)
         return evaluator.evaluate()
 
     def show_data(self):

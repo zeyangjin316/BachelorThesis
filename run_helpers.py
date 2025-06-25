@@ -13,7 +13,7 @@ def run_cgm_experiment(
     sample_model=True,
     evaluate=True
 ):
-    model = CGMModel(split_point=split_point, window_size=window_size, loss_type=loss_type)
+    model = CGMModel(split_point=split_point, train_freq=window_size, loss_type=loss_type)
 
     if fit_model:
         model.fit(n_epochs=n_epochs, batch_size=batch_size)
