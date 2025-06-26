@@ -24,8 +24,9 @@ def main():
     if choice in {"cgm", "both"}:
         print("\n=== Running CGM Experiment ===")
         samples_cgm, results_cgm = run_cgm_experiment(
-            split_point=0.8,
-            window_size=7,
+            split_point=0.9,
+            train_freq=30,
+            train_window_size = 20,
             loss_type='ES',
             n_epochs=10,
             batch_size=256,
@@ -38,7 +39,7 @@ def main():
     if choice in {"2step", "both"}:
         print("\n=== Running Two-Step Experiment ===")
         samples_two_step, results_two_step = run_two_step_experiment(
-            split_point=0.99,
+            split_point=0.9,
             uv_train_freq=7,
             copula_window_size=0.005,
             uv_method="ARMAGARCH",

@@ -4,7 +4,8 @@ from copula_method.two_step_model import TwoStepModel
 
 def run_cgm_experiment(
     split_point=0.8,
-    window_size=7,
+    train_freq=7,
+    train_window_size = 20,
     loss_type='ES',
     n_epochs=10,
     batch_size=256,
@@ -13,7 +14,7 @@ def run_cgm_experiment(
     sample_model=True,
     evaluate=True
 ):
-    model = CGMModel(split_point=split_point, train_freq=window_size, loss_type=loss_type)
+    model = CGMModel(split_point=split_point, train_freq=train_freq, train_window_size=train_window_size, loss_type=loss_type)
 
     if fit_model:
         model.fit(n_epochs=n_epochs, batch_size=batch_size)
@@ -26,13 +27,13 @@ def run_cgm_experiment(
     results = None
     if evaluate and samples is not None:
         results = model.evaluate(samples)
-        """try:
+        try:
             results = model.evaluate(samples)
             print("CGM Evaluation Results:")
             for k, v in results.items():
                 print(f"{k}: {v:.4f}")
         except Exception as e:
-            print("CGM Evaluation skipped:", e)"""
+            print("CGM Evaluation skipped:", e)
 
     return samples, results
 
