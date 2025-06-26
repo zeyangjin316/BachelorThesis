@@ -1,5 +1,7 @@
 import logging
-import matplotlib.pyplot as plt
+import pandas as pd
+import time
+from results import ResultSaver
 from run_helpers import run_cgm_experiment, run_two_step_experiment
 
 # === Logging Setup ===
@@ -14,56 +16,90 @@ logging.basicConfig(
 logging.getLogger('rpy2').setLevel(logging.INFO)
 
 
-# === Main Entry Point ===
 def main():
-    results_cgm, results_two_step = None, None
+    summary_rows = []
+    samples_cgm, samples_two_step = None, None
 
     # === User Selection ===
-    choice = input("Run CGM, Two-Step model, or both? Enter 'cgm', '2step', or 'both': ").strip().lower()
-
-    if choice in {"cgm", "both"}:
-        print("\n=== Running CGM Experiment ===")
-        samples_cgm, results_cgm = run_cgm_experiment(
-            split_point=0.9,
-            train_freq=30,
-            train_window_size = 20,
-            loss_type='ES',
-            n_epochs=10,
-            batch_size=256,
-            n_samples=100,
-            fit_model=True,
-            sample_model=True,
-            evaluate=True
-        )
-
-    if choice in {"2step", "both"}:
-        print("\n=== Running Two-Step Experiment ===")
-        samples_two_step, results_two_step = run_two_step_experiment(
-            split_point=0.9,
-            uv_train_freq=7,
-            copula_window_size=0.005,
-            uv_method="ARMAGARCH",
-            copula_type="Gaussian",
-            fit_model=True,
-            sample_model=True,
-            evaluate=True
-        )
-
-    if choice not in {"cgm", "2step", "both"}:
+    choice = input("Run CGM, Two-Step model, or comparison? Enter 'cgm', '2step', or 'comparison': ").strip().lower()
+    if choice not in {"cgm", "2step", "comparison"}:
         print("Invalid choice")
         return
 
-    print("\n=== Summary ===")
+    # === Parameter Definitions ===
+    cgm_params = {
+        "split_point": 0.99,
+        "train_freq": 20,
+        "train_window_size": 20,
+        "loss_type": "ES",
+        "n_epochs": 10,
+        "batch_size": 256,
+        "n_samples": 100
+    }
 
-    if results_cgm:
-        print("CGM Evaluation Metrics:")
-        for k, v in results_cgm.items():
-            print(f"  {k}: {v:.4f}")
+    two_step_params = {
+        "split_point": 0.99,
+        "uv_train_freq": 20,
+        "copula_window_size": 0.005,
+        "uv_method": "ARMAGARCH",
+        "copula_type": "Gaussian"
+    }
 
-    if results_two_step:
-        print("Two-Step Evaluation Metrics:")
-        for k, v in results_two_step.items():
-            print(f"  {k}: {v:.4f}")
+    # === Run Experiments ===
+    start_time = time.time()
+
+    if choice in {"cgm", "comparison"}:
+        logging.info("Running CGM Experiment")
+        samples_cgm, results_cgm = run_cgm_experiment(
+            **cgm_params,
+            fit_model=True,
+            sample_model=True,
+            evaluate=True
+        )
+        if results_cgm:
+            summary_rows.append({
+                "Model": "CGM",
+                "Split Point": cgm_params["split_point"],
+                "Train Freq": cgm_params["train_freq"],
+                "Window Size": cgm_params["train_window_size"],
+                "Loss": cgm_params["loss_type"],
+                "Epochs": cgm_params["n_epochs"],
+                "Batch Size": cgm_params["batch_size"],
+                "Samples": cgm_params["n_samples"],
+                "Time (s)": round(time.time() - start_time, 2),
+                **results_cgm
+            })
+
+    if choice in {"2step", "comparison"}:
+        logging.info("Running Two-Step Experiment")
+        samples_two_step, results_two_step = run_two_step_experiment(
+            **two_step_params,
+            fit_model=True,
+            sample_model=True,
+            evaluate=True
+        )
+        if results_two_step:
+            summary_rows.append({
+                "Model": "Two-Step",
+                "Split Point": two_step_params["split_point"],
+                "UV Train Freq": two_step_params["uv_train_freq"],
+                "Copula Window": two_step_params["copula_window_size"],
+                "UV Method": two_step_params["uv_method"],
+                "Copula": two_step_params["copula_type"],
+                "Epochs": "-",
+                "Batch Size": "-",
+                "Samples": "-",
+                "Time (s)": round(time.time() - start_time, 2),
+                **results_two_step
+            })
+
+    # === Save Results ===
+    if summary_rows:
+        df_summary = pd.DataFrame(summary_rows)
+        saver = ResultSaver(choice, cgm_params, two_step_params)
+        saver.save(samples_cgm, samples_two_step, df_summary)
+    else:
+        print("No results to summarize.")
 
 
 if __name__ == "__main__":

@@ -35,8 +35,13 @@ class ForecastEvaluator:
                     test_day_data[test_day_data['sym_root'] == symbol]['ret_crsp'].values[0]
                     for symbol in self.asset_order
                 ]).reshape(1, -1)
+
+                if np.isnan(y_true).any():
+                    logger.warning(f"Skipping {date} due to NaN in ground truth returns.")
+                    continue
+
             except IndexError:
-                logger.warning(f"Skipping {date} due to missing values.")
+                logger.warning(f"Skipping {date} due to missing asset data.")
                 continue
 
             y_pred = self.samples[t][np.newaxis, :, :]  # shape: (1, n_assets, n_samples)

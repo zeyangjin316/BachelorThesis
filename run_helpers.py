@@ -23,15 +23,16 @@ def run_cgm_experiment(
     if sample_model:
         samples = model.sample(n_samples=n_samples)
         print(f"Generated CGM samples shape: {samples.shape}")
+        #print(samples)
+
 
     results = None
     if evaluate and samples is not None:
-        results = model.evaluate(samples)
         try:
             results = model.evaluate(samples)
-            print("CGM Evaluation Results:")
+            """print("CGM Evaluation Results:")
             for k, v in results.items():
-                print(f"{k}: {v:.4f}")
+                print(f"{k}: {v:.4f}")"""
         except Exception as e:
             print("CGM Evaluation skipped:", e)
 
@@ -65,9 +66,9 @@ def run_two_step_experiment(
     if evaluate and samples is not None:
         try:
             results = model.evaluate(samples)
-            print("Two-Step Evaluation Results:")
+            """print("Two-Step Evaluation Results:")
             for k, v in results.items():
-                print(f"{k}: {v:.4f}")
+                print(f"{k}: {v:.4f}")"""
         except Exception as e:
             print("Two-Step Evaluation skipped:", e)
 
