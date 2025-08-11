@@ -12,7 +12,7 @@ class ResultSaver:
         os.makedirs(self.base_path, exist_ok=True)
 
     def _build_base_path(self):
-        if self.mode == "cgm":
+        if self.mode == "cgm_method":
             name = (
                 f"CGM_loss-{self.cgm_params['loss_type']}"
                 f"_win{self.cgm_params['train_window_size']}"

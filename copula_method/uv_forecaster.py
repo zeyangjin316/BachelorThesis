@@ -1,10 +1,8 @@
 import logging
 import numpy as np
-import pandas as pd
 import joblib
+from uv_models import UnivariateModel
 from tqdm.auto import tqdm
-from tqdm import tqdm
-from copula_method.uv_models import UnivariateModel
 from joblib import Parallel, delayed
 from contextlib import contextmanager
 
@@ -26,106 +24,74 @@ def tqdm_joblib(tqdm_object):
         tqdm_object.close()
 
 class UnivariateForecaster:
-    def __init__(self, data, method, train_set):
-        self.train_set_len = len(train_set)
+    def __init__(self, data, method, train_set, uv_train_freq, fixed_window):
         self.full_data = data
         self.method = method
+        self.train_set_len = len(train_set)
+        self.uv_train_freq = uv_train_freq
+        self.fixed_window = fixed_window
 
-    def generate_uv_samples(self, test_dates, symbols, n_samples, fixed_window=True, freq=1):
-        """
-        Generate univariate forecast samples for each symbol and test day.
-
-        For each date:
-        - Refit the univariate model every `freq` days (reuse in between).
-        - Generate `n_samples` samples per symbol using the fitted model.
-
-        Parameters
-        ----------
-        test_dates : list of str or pd.Timestamp
-            Dates to forecast.
-        symbols : list of str
-            Asset symbols to model.
-        n_samples : int
-            Number of samples to generate per symbol per day.
-        fixed_window : bool
-            Use a rolling window (True) or expanding window (False) for training data.
-        freq : int
-            Frequency (in days) to refit the univariate model.
-
-        Returns
-        -------
-        dict[pd.Timestamp, dict[str, np.ndarray]]
-            Forecast samples: uv_samples[day][symbol] → np.array of shape (n_samples,)
-
-        Notes
-        -----
-        Intended for copula input transformation using PIT and Gaussianization.
-        """
-        uv_samples = {}
-        last_model = None
-
-        logger.info("Generating UV samples with model refit every {} days".format(freq))
-
-        for i, date in enumerate(tqdm(test_dates, desc="Generating UV samples")):
-            logger.info(f"Processing test day {date} ...")
-
-            # Decide whether to refit
-            if i % freq == 0:
-                logger.info(f"Fitting univariate model on day {date}")
-                data_up_to_date = self.full_data[self.full_data['date'] < date]
-                if fixed_window:
-                    window_size = self.train_set_len
-                    data_up_to_date = data_up_to_date.groupby('sym_root').tail(window_size)
-
-                last_model = UnivariateModel(data_up_to_date, self.method)
-                last_model.fit(current_day=date)
-            else:
-                logger.info(f"Reusing last fitted univariate model for {date}")
-
-            # Parallel sampling per symbol
-            def sample_one_symbol(symbol):
-                try:
-                    samples = last_model.sample(symbol, n_samples=n_samples)
-                    return symbol, samples
-                except Exception as e:
-                    logger.warning(f"Failed sampling {symbol} on {date}: {e}")
-                    return symbol, np.array([])
-
-            symbol_samples = Parallel(n_jobs=-1)(
-                delayed(sample_one_symbol)(symbol) for symbol in symbols
-            )
-
-            uv_samples[date] = {symbol: samples for symbol, samples in symbol_samples}
-
-        logger.info("Finished parallel UV sample generation.")
-        logger.info("Generated uv_samples ready for PIT computation.")
-        return uv_samples
-
-    def _generate_samples_for_day(self, date, symbols, n_samples, fixed_window):
-        """
-        Generate n_samples per symbol for a given test date.
-
-        Returns:
-        dict { symbol: np.array([samples]) }
-        """
+    def _fit_model_for_date(self, date):
+        """Fit and return a UnivariateModel using data up to (but excluding) `date`."""
         data_up_to_date = self.full_data[self.full_data['date'] < date]
-
-        if fixed_window:
-            window_size = self.train_set_len
-            data_up_to_date = data_up_to_date.groupby('sym_root').tail(window_size)
-
-        # Fit model on current window
+        if self.fixed_window:
+            data_up_to_date = data_up_to_date.groupby('sym_root').tail(self.train_set_len)
         model = UnivariateModel(data_up_to_date, self.method)
         model.fit(current_day=date)
+        return model
 
-        samples_for_day = {}
-
-        for symbol in symbols:
+    def _sample_symbols(self, model, symbols, n_samples, date):
+        """Sample all symbols in parallel from a fitted model."""
+        def sample_one_symbol(symbol):
             try:
                 samples = model.sample(symbol, n_samples=n_samples)
-                samples_for_day[symbol] = samples
+                return symbol, samples
             except Exception as e:
                 logger.warning(f"Failed sampling {symbol} on {date}: {e}")
-                samples_for_day[symbol] = np.array([])
+                return symbol, np.array([])
+        with tqdm_joblib(tqdm(total=len(symbols), desc=f"Sampling {date}")):
+            pairs = Parallel(n_jobs=-1)(delayed(sample_one_symbol)(s) for s in symbols)
+        return {sym: samp for sym, samp in pairs}
 
-        return samples_for_day
+    def _prefit_models(self, test_dates):
+        """
+        Fit models for all refit dates in parallel and return {refit_date: model}.
+        """
+        freq = self.uv_train_freq
+        refit_dates = [d for i, d in enumerate(test_dates) if i % freq == 0]
+
+        logger.info(f"Parallel fitting {len(refit_dates)} refit points (freq={freq}).")
+
+        # Fit in parallel across refit dates
+        with tqdm_joblib(tqdm(total=len(refit_dates), desc="Fitting models (refit dates)")):
+            models = Parallel(n_jobs=-1)(
+                delayed(self._fit_model_for_date)(d) for d in refit_dates
+            )
+
+        return dict(zip(refit_dates, models))
+
+    def generate_uv_samples(self, test_dates, symbols, n_samples):
+        """
+        Generate univariate forecast samples for each symbol and test day,
+        refitting every `self.uv_train_freq` days (parallelized) and reusing in between.
+        """
+        uv_samples = {}
+        freq = self.uv_train_freq
+
+        # 1) Parallel-fit models for refit dates
+        models_by_refit_date = self._prefit_models(test_dates)
+
+        # 2) For each test day, pick the latest refit model and sample symbols (parallel)
+        last_refit_date = None
+        for i, date in enumerate(tqdm(test_dates, desc="Generating UV samples")):
+            if (i % freq) == 0:
+                last_refit_date = date
+                logger.info(f"Using freshly fitted model for refit day {date}")
+            else:
+                logger.info(f"Reusing model from last refit day {last_refit_date} for {date}")
+
+            model = models_by_refit_date[last_refit_date]
+            uv_samples[date] = self._sample_symbols(model, symbols, n_samples, date)
+
+        logger.info("Finished UV sample generation (fit+sample parallelized).")
+        return uv_samples

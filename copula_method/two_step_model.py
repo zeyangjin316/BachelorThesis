@@ -15,13 +15,50 @@ from data_handling import DataHandler
 logger = logging.getLogger(__name__)
 
 class TwoStepModel:
+    """
+    This class implements a two-step copula-based forecasting model:
+    1. Univariate modeling for each symbol to produce marginal forecast distributions.
+    2. Copula modeling on the PIT-transformed residuals to capture dependency structure
+       and generate joint scenarios.
+
+    Parameters
+    ----------
+    split_point : float or datetime, default=0.8
+        Proportion of the data used for training if float, or exact split date if datetime.
+    fixed_uv_window : bool, default=True
+        Whether to use a fixed-length rolling window for univariate model training.
+    uv_train_freq : int, default=1
+        Frequency (in days) at which the univariate models are retrained.
+    copula_window_size : float, default=0.05
+        Size of the rolling window (as fraction of training set length) for copula fitting.
+    univariate_type : str, default="ARMAGARCH"
+        Type of univariate model to fit for each symbol.
+    copula_type : str, default="Gaussian"
+        Type of copula used for dependency modeling.
+
+    Methods
+    -------
+    fit(n_samples_per_day=100)
+        Fit univariate models and rolling copulas.
+    sample(n_samples=1000)
+        Generate multivariate joint samples from the copula and marginals.
+    evaluate(samples)
+        Evaluate forecast samples using scoring rules.
+    show_data()
+        Plot training and test splits for each symbol.
+    """
     def __init__(self,
                  split_point: Union[float, datetime] = 0.8,
+
+                 univariate_type: str = "ARMAGARCH",
                  fixed_uv_window: bool = True,
                  uv_train_freq: int = 1,
+
+                 copula_type: str = "Gaussian",
                  copula_window_size: float = 0.05,
-                 univariate_type: str = "ARMAGARCH",
-                 copula_type: str ="Gaussian"):
+
+                 n_samples_per_day: int = 100,
+                 n_samples: int = 1000):
 
         logger.info("Initializing two-step model")
         self.split_point = split_point
@@ -30,9 +67,11 @@ class TwoStepModel:
         self.copula_window_size = copula_window_size
         self.univariate_type = univariate_type
         self.copula_type = copula_type
-        self.data_handler = DataHandler(self.split_point)
+        self.n_samples_per_day = n_samples_per_day
+        self.n_samples = n_samples
 
         # Collecting and splitting data
+        self.data_handler = DataHandler(self.split_point)
         self.data_dict = self.data_handler.get_data()
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
@@ -40,7 +79,7 @@ class TwoStepModel:
 
         logger.info("Two-step model initialized")
 
-    def fit(self, n_samples_per_day=100):
+    def fit(self):
         logger.info("Starting fitting two-step model")
 
         # === Define symbol list ===
@@ -63,14 +102,14 @@ class TwoStepModel:
         univariate_forecaster = UnivariateForecaster(
             data=self.full_data,
             method=self.univariate_type,
-            train_set=self.train_data
+            train_set=self.train_data,
+            uv_train_freq=self.uv_train_freq,
+            fixed_window=self.fixed_uv_window
         )
         self.uv_samples = univariate_forecaster.generate_uv_samples(
             test_dates=uv_forecast_dates,
             symbols=symbols,
-            n_samples=n_samples_per_day,
-            fixed_window=self.fixed_uv_window,
-            freq=self.uv_train_freq
+            n_samples=self.n_samples_per_day,
         )
 
         # === Fit rolling copulas using PITs and Z-vectors ===
@@ -90,7 +129,7 @@ class TwoStepModel:
 
         logger.info("Two-step model fitting complete")
 
-    def sample(self, n_samples: int = 1000) -> np.ndarray:
+    def sample(self) -> np.ndarray:
         """
         Generate daily joint return samples from the copula and marginal forecasts.
 
@@ -99,14 +138,14 @@ class TwoStepModel:
         np.ndarray
             Shape (n_days, n_symbols, n_samples)
         """
-        logger.info(f"Sampling {n_samples} multivariate scenarios per day")
+        logger.info(f"Sampling {self.n_samples} multivariate scenarios per day")
 
         test_dates = sorted(self.test_data['date'].unique())
         symbols = sorted(self.test_data['sym_root'].unique())
         n_days = len(test_dates)
         n_symbols = len(symbols)
 
-        all_day_samples = np.full((n_days, n_symbols, n_samples), np.nan)
+        all_day_samples = np.full((n_days, n_symbols, self.n_samples), np.nan)
 
         with tqdm(test_dates, desc="Sampling Copula Forecasts", leave=False) as pbar:
             for day_idx, current_day in enumerate(pbar):
@@ -121,7 +160,7 @@ class TwoStepModel:
                 try:
                     # === Step 2: Sample from Gaussian copula ===
                     mean = np.zeros(n_symbols)
-                    z_samples = np.random.multivariate_normal(mean, corr_matrix, size=n_samples).T
+                    z_samples = np.random.multivariate_normal(mean, corr_matrix, size=self.n_samples).T
 
                     # === Step 3: Gaussian → Uniform space ===
                     u_samples = norm.cdf(z_samples)

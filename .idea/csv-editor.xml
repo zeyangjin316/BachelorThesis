@@ -24,7 +24,7 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\results_summary.csv">
+        <entry key="\results\CGM_loss-ES_win20_tf20_ep10_bs256_ns100\summary.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

@@ -1,8 +1,10 @@
 import logging
 import pandas as pd
 import time
+import argparse
 from results import ResultSaver
-from run_helpers import run_cgm_experiment, run_two_step_experiment
+from run_helpers import run_experiment
+from cgm_method.configs import CGMInitConfig, CGMFitConfig, CGMPredictConfig, DataConfig
 
 # === Logging Setup ===
 logging.basicConfig(
@@ -15,80 +17,81 @@ logging.basicConfig(
 )
 logging.getLogger('rpy2').setLevel(logging.INFO)
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'choice',
+        choices=['cgm', 'two-step','comparison']
+    )
+    return parser.parse_args()
 
 def main():
+    args = parse_args()
+    choice = args.choice
     summary_rows = []
     samples_cgm, samples_two_step = None, None
 
-    # === User Selection ===
-    choice = input("Run CGM, Two-Step model, or comparison? Enter 'cgm', '2step', or 'comparison': ").strip().lower()
-    if choice not in {"cgm", "2step", "comparison"}:
-        print("Invalid choice")
-        return
-
     # === Parameter Definitions ===
     cgm_params = {
-        "split_point": 0.99,
-        "train_freq": 20,
-        "train_window_size": 20,
-        "loss_type": "ES",
-        "n_epochs": 10,
-        "batch_size": 256,
-        "n_samples": 100
+        "data_cfg": DataConfig(
+            split_point=0.99,
+            standardize=True
+        ),
+        "cgm_init": CGMInitConfig(
+            dim_latent=50,
+            n_samples_train=100,
+            emb_size=2
+        ),
+        "train_cfg": CGMFitConfig(
+            n_epochs=10,
+            batch_size=256,
+            train_freq=20,
+            train_window_size=20,
+            learningrate=0.01,  # or "decay"
+            verbose=1,
+            callbacks=None,
+            validation_split=0.0,
+            validation_data=None,
+            sample_weight=None
+        ),
+        "pred_cfg": CGMPredictConfig(
+            n_samples=100,
+            verbose=0
+        ),
     }
 
     two_step_params = {
         "split_point": 0.99,
+        "fixed_uv_window": 0.005,
         "uv_train_freq": 20,
         "copula_window_size": 0.005,
         "uv_method": "ARMAGARCH",
-        "copula_type": "Gaussian"
+        "copula_type": "Gaussian",
+        "n_samples_per_day": 100,
+        "n_samples": 1000
     }
 
     # === Run Experiments ===
     start_time = time.time()
 
-    if choice in {"cgm", "comparison"}:
+    if args.choice in {"cgm", "comparison"}:
         logging.info("Running CGM Experiment")
-        samples_cgm, results_cgm = run_cgm_experiment(
-            **cgm_params,
-            fit_model=True,
-            sample_model=True,
-            evaluate=True
-        )
+        samples_cgm, results_cgm = run_experiment("cgm_method", cgm_params)
         if results_cgm:
             summary_rows.append({
                 "Model": "CGM",
-                "Split Point": cgm_params["split_point"],
-                "Train Freq": cgm_params["train_freq"],
-                "Window Size": cgm_params["train_window_size"],
-                "Loss": cgm_params["loss_type"],
-                "Epochs": cgm_params["n_epochs"],
-                "Batch Size": cgm_params["batch_size"],
-                "Samples": cgm_params["n_samples"],
+                **cgm_params,
                 "Time (s)": round(time.time() - start_time, 2),
                 **results_cgm
             })
 
-    if choice in {"2step", "comparison"}:
+    if args.choice in {"2step", "comparison"}:
         logging.info("Running Two-Step Experiment")
-        samples_two_step, results_two_step = run_two_step_experiment(
-            **two_step_params,
-            fit_model=True,
-            sample_model=True,
-            evaluate=True
-        )
+        samples_two_step, results_two_step = run_experiment("2step", two_step_params)
         if results_two_step:
             summary_rows.append({
                 "Model": "Two-Step",
-                "Split Point": two_step_params["split_point"],
-                "UV Train Freq": two_step_params["uv_train_freq"],
-                "Copula Window": two_step_params["copula_window_size"],
-                "UV Method": two_step_params["uv_method"],
-                "Copula": two_step_params["copula_type"],
-                "Epochs": "-",
-                "Batch Size": "-",
-                "Samples": "-",
+                **two_step_params,
                 "Time (s)": round(time.time() - start_time, 2),
                 **results_two_step
             })
