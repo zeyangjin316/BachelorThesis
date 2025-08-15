@@ -12,6 +12,8 @@ from copula_method.uv_models import register_uv_model, BaseUVModel
 
 log = logging.getLogger(__name__)
 
+# To install needed packages: python -m pip install -r requirements.txt
+
 # ---------------- helpers ----------------
 
 def _pick_target_column(df: pd.DataFrame, user_col: Optional[str]) -> str:
