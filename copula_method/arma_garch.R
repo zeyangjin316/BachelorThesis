@@ -1,34 +1,44 @@
-#install.packages("forecast")
-#install.packages("rugarch")
-
+# arma_garch.R
+suppressMessages({
+  if (!requireNamespace("forecast", quietly = TRUE)) stop("Package 'forecast' missing")
+  if (!requireNamespace("rugarch",  quietly = TRUE)) stop("Package 'rugarch'  missing")
+})
 library(forecast)
 library(rugarch)
 
-fit_arma_garch <- function(time_series) {
-  # Fit ARMA model
-  arma_model <- auto.arima(time_series)
+fit_arma_garch <- function(
+  time_series,
+  arima_max_p = 5, arima_max_q = 5, seasonal = FALSE,
+  ic = "aicc", stepwise = TRUE, approximation = FALSE,
+  variance_model = "sGARCH",
+  garch_order = c(1, 1),
+  mean_order = c(0, 0),
+  include_mean = FALSE,
+  dist = "norm"
+) {
+  arma_model <- forecast::auto.arima(
+    time_series,
+    max.p = arima_max_p,
+    max.q = arima_max_q,
+    seasonal = seasonal,
+    ic = ic,
+    stepwise = stepwise,
+    approximation = approximation
+  )
   arma_residuals <- residuals(arma_model)
 
-  # Specify the GARCH model (here we use a basic GARCH(1,1) model)
-  garch_spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
-                           mean.model = list(armaOrder = c(0, 0)),
-                           distribution.model = "norm")
+  garch_spec <- rugarch::ugarchspec(
+    variance.model = list(model = variance_model, garchOrder = garch_order),
+    mean.model     = list(armaOrder = mean_order, include.mean = include_mean),
+    distribution.model = dist
+  )
+  garch_model <- rugarch::ugarchfit(spec = garch_spec, data = arma_residuals)
 
-  # Fit the GARCH model to the residuals of the ARMA model
-  garch_model <- ugarchfit(spec = garch_spec, data = arma_residuals)
-
-  # Return the results of the ARMA and GARCH models
-  return(list(arma_model = arma_model, garch_model = garch_model))
+  list(arma_model = arma_model, garch_model = garch_model)
 }
 
 forecast_arma_garch_samples <- function(arma_model, garch_model, n_samples = 1000) {
-  # Forecast mean from ARMA
-  mu <- as.numeric(forecast(arma_model, h = 1)$mean)
-
-  # Forecast volatility from GARCH
-  sigma <- sigma(ugarchforecast(garch_model, n.ahead = 1))
-
-  # Generate samples from predictive distribution
-  samples <- rnorm(n_samples, mean = mu, sd = sigma)
-  return(samples)
+  mu  <- as.numeric(forecast::forecast(arma_model, h = 1)$mean)
+  sig <- as.numeric(rugarch::sigma(rugarch::ugarchforecast(garch_model, n.ahead = 1)))
+  stats::rnorm(as.integer(n_samples), mean = mu, sd = sig)
 }

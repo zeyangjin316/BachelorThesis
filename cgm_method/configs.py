@@ -2,6 +2,11 @@ from dataclasses import dataclass
 from typing import Any
 
 @dataclass
+class CGMDataConfig:
+    split_point: float | Any = 0.99
+    standardize: bool = True
+
+@dataclass
 class CGMInitConfig:
     dim_latent: int = 50
     n_samples_train: int = 100
@@ -21,11 +26,6 @@ class CGMFitConfig:
     sample_weight: Any = None
 
 @dataclass
-class CGMPredictConfig:
+class CGMSampleConfig:
     n_samples: int = 1000
     verbose: int = 0
-
-@dataclass
-class DataConfig:
-    split_point: float | Any = 0.99
-    standardize: bool = True

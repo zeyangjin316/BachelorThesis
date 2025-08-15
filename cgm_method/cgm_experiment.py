@@ -9,9 +9,9 @@ from tqdm import tqdm
 from config import TARGET_VAR
 from data_handling import DataHandler
 from evaluator import ForecastEvaluator
-from cgm_method import prepare_cgm_inputs_for_sampling
+from cgm_method import prepare_cgm_inputs_for_sampling, CGMDataConfig
 from cgm_method import CGMTrainer
-from cgm_method import CGMInitConfig, CGMFitConfig, CGMPredictConfig
+from cgm_method import CGMInitConfig, CGMFitConfig, CGMSampleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,12 @@ class DataConfig:
     split_point: Union[float, datetime] = 0.8
     standardize: bool = True
 
-class CGMModel:
+class CGMExperiment:
     def __init__(self,
-                 data_cfg: DataConfig,
+                 data_cfg: DataConfig = CGMDataConfig(),
                  cgm_init: CGMInitConfig = CGMInitConfig(),
                  train_cfg: CGMFitConfig = CGMFitConfig(),
-                 pred_cfg: CGMPredictConfig = CGMPredictConfig()):
+                 pred_cfg: CGMSampleConfig = CGMSampleConfig()):
         self.data_cfg = data_cfg
         self.cgm_init = cgm_init
         self.train_cfg = train_cfg

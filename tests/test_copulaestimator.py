@@ -1,5 +1,5 @@
 import pandas as pd
-from copula_method.copula_fitting import CopulaEstimator
+from copula_method.copula_models import CopulaEstimator
 
 def test_fit_copula_from_transformed_data():
     df = pd.DataFrame({

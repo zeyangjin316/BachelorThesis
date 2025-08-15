@@ -1,10 +1,15 @@
+# --- rpy2 / R bootstrap for Windows: MUST come before any other imports ---
+import os
+os.environ["RPY2_CFFI_MODE"] = "ABI"
+
 import logging
 import pandas as pd
 import time
 import argparse
 from results import ResultSaver
 from run_helpers import run_experiment
-from cgm_method.configs import CGMInitConfig, CGMFitConfig, CGMPredictConfig, DataConfig
+from cgm_method.configs import CGMInitConfig, CGMFitConfig, CGMSampleConfig, CGMDataConfig
+from copula_method.configs import TSInitConfig, TSFitConfig, TSSampleConfig, TSDataConfig
 
 # === Logging Setup ===
 logging.basicConfig(
@@ -21,7 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         'choice',
-        choices=['cgm', 'two-step','comparison']
+        choices=['cgm', '2step','comparison']
     )
     return parser.parse_args()
 
@@ -33,7 +38,7 @@ def main():
 
     # === Parameter Definitions ===
     cgm_params = {
-        "data_cfg": DataConfig(
+        "data_cfg": CGMDataConfig(
             split_point=0.99,
             standardize=True
         ),
@@ -54,23 +59,41 @@ def main():
             validation_data=None,
             sample_weight=None
         ),
-        "pred_cfg": CGMPredictConfig(
+        "pred_cfg": CGMSampleConfig(
             n_samples=100,
             verbose=0
         ),
     }
 
-    two_step_params = {
-        "split_point": 0.99,
-        "fixed_uv_window": 0.005,
-        "uv_train_freq": 20,
-        "copula_window_size": 0.005,
-        "uv_method": "ARMAGARCH",
-        "copula_type": "Gaussian",
-        "n_samples_per_day": 100,
-        "n_samples": 1000
+    ts_params = {
+        "data_config": TSDataConfig(
+            split_point=0.99,
+        ),
+        "init_config": TSInitConfig(
+            univariate_type="ARMAGARCH",
+            copula_type="Gaussian",
+            rolling_window_size=0.6,
+            copula_refit_freq=1,
+            uv_fit_percentage=0.5,
+            uv_refit_freq=1
+        ),
+        "fit_config": TSFitConfig(
+            arma_order=(1, 1),
+            include_mean=True,
+            arma_maxiter=600,  # more iterations for first optimizer
+            on_nonconverge="drop_ma",  # or "drop_ar" or "warn"
+            variance_model="sGARCH",  # or "gjrGARCH", "eGARCH"
+            garch_order=(1, 1),
+            dist="norm",
+            garch_scale="auto",  # or fixed, e.g. 100.0
+            garch_target_std=10.0,
+            suppress_convergence_warnings=True
+        ),
+        "sample_config": TSSampleConfig(
+            n_samples=100,
+            n_samples_uv=100,
+        ),
     }
-
     # === Run Experiments ===
     start_time = time.time()
 
@@ -87,11 +110,11 @@ def main():
 
     if args.choice in {"2step", "comparison"}:
         logging.info("Running Two-Step Experiment")
-        samples_two_step, results_two_step = run_experiment("2step", two_step_params)
+        samples_two_step, results_two_step = run_experiment("2step", ts_params)
         if results_two_step:
             summary_rows.append({
                 "Model": "Two-Step",
-                **two_step_params,
+                **ts_params,
                 "Time (s)": round(time.time() - start_time, 2),
                 **results_two_step
             })
@@ -99,7 +122,7 @@ def main():
     # === Save Results ===
     if summary_rows:
         df_summary = pd.DataFrame(summary_rows)
-        saver = ResultSaver(choice, cgm_params, two_step_params)
+        saver = ResultSaver(choice, cgm_params, ts_params)
         saver.save(samples_cgm, samples_two_step, df_summary)
     else:
         print("No results to summarize.")
