@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from copula_method import CopulaCalibrator
 from evaluator import ForecastEvaluator
-from data_handling import DataHandler
+from data.data_handling import DataHandler
 from copula_method import TSDataConfig, TSInitConfig, TSFitConfig, TSSampleConfig
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class TwoStepExperiment:
 
     def _split_data(self):
         data_handler = DataHandler(self.data_config.split_point)
-        self.data_dict = data_handler.get_data(standardize=False)
+        self.data_dict = data_handler.get_data(standardize=False, filter_features=True)
 
     def fit(self):
         calibrator = CopulaCalibrator(self.data_dict, self.init_config, self.fit_config, self.sample_config)

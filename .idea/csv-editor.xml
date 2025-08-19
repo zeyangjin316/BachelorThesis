@@ -24,7 +24,28 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\plots\dataframe.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\CGM\20250817-201854\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\results\CGM_loss-ES_win20_tf20_ep10_bs256_ns100\summary.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\TWOSTEP\20250817-202824\metrics.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

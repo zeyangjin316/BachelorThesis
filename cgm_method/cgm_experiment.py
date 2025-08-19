@@ -3,11 +3,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Union, Optional, Dict, Any
+from typing import Union, Dict, Any
 from tqdm import tqdm
 
 from config import TARGET_VAR
-from data_handling import DataHandler
+from data.data_handling import DataHandler
 from evaluator import ForecastEvaluator
 from cgm_method import prepare_cgm_inputs_for_sampling, CGMDataConfig
 from cgm_method import CGMTrainer
@@ -32,7 +32,7 @@ class CGMExperiment:
         self.pred_cfg = pred_cfg
 
         self.data_handler = DataHandler(self.data_cfg.split_point)
-        self.data_dict = self.data_handler.get_data(standardize=self.data_cfg.standardize)
+        self.data_dict = self.data_handler.get_data(standardize=self.data_cfg.standardize, filter_features=True)
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
         self.test_data = self.data_dict['test_set']

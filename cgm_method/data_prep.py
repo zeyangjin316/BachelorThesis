@@ -9,7 +9,7 @@ def prepare_cgm_inputs(train_data, window_size=20):
 
     # Step 1: Get expected stocks and features
     expected_stocks = sorted(train_data['sym_root'].unique())
-    stock_features = ['ret_crsp', 'open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
+    stock_features = ['ret_crsp', 'open_crsp', 'log_ret_lag_close_to_open']
     macro_features = [col for col in train_data.columns if col.startswith('vix') or col.startswith('ltv')]
 
     # Step 2: Pivot stock-level features
@@ -83,7 +83,7 @@ def prepare_cgm_inputs_for_sampling(data: pd.DataFrame, window_size: int):
     """
 
     expected_stocks = sorted(data['sym_root'].unique())
-    stock_features = ['ret_crsp', 'open_crsp', 'close_crsp', 'log_ret_lag_close_to_open']
+    stock_features = ['ret_crsp', 'open_crsp', 'log_ret_lag_close_to_open']
     macro_features = [col for col in data.columns if col.startswith('vix') or col.startswith('ltv')]
 
     # Step 1: Pivot stock features

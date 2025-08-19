@@ -1,5 +1,5 @@
 import os
-from data_handling import Reader
+from data.data_handling import Reader
 
 def test_all_dates_have_10_stocks():
     # Compute correct path relative to this test file
