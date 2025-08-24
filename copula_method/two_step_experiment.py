@@ -36,7 +36,7 @@ class TwoStepExperiment:
 
     def _split_data(self):
         data_handler = DataHandler(self.data_config.split_point)
-        self.data_dict = data_handler.get_data(standardize=False, filter_features=True)
+        self.data_dict = data_handler.get_data(standardize=False, filter_features=True, exclude_pandemic=True)
 
     def fit(self):
         calibrator = CopulaCalibrator(self.data_dict, self.init_config, self.fit_config, self.sample_config)

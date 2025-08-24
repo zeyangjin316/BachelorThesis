@@ -1,7 +1,10 @@
+from typing import Any
+
 import pandas as pd
 from datetime import datetime
 from cgm_method import prepare_cgm_inputs
 from cgm_method import cgm, CGMInitConfig, CGMFitConfig
+from data.data_scaling import SmartScaler
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +22,11 @@ class CGMTrainer:
         self.rolling_days = len(initial_train_dates)
 
     def _train_single_on(self, data: pd.DataFrame) -> cgm:
-        X_past, X_std, X_all, X_weekday, Y = prepare_cgm_inputs(data, self.cfg.train_window_size)
+
+        scaler = SmartScaler(data)
+        scaled_data = scaler.transform()
+
+        X_past, X_std, X_all, X_weekday, Y = prepare_cgm_inputs(scaled_data, self.cfg.train_window_size)
         dim_out = Y.shape[1]
         dim_in_past = X_past.shape[2]
         dim_in_features = X_all.shape[1]
@@ -45,13 +52,15 @@ class CGMTrainer:
             sample_weight=self.cfg.sample_weight,
             learningrate=self.cfg.learningrate,
         )
-        return model
+        return model, scaler
 
-    def train_all(self) -> dict[datetime, cgm]:
+    def train_all(self) -> tuple[dict[Any, Any], dict[Any, Any]]:
         trained_models = {}
+        scalers = {}
         all_dates = self.full_data['date'].drop_duplicates().sort_values().reset_index(drop=True)
         total_steps = len(all_dates) - self.rolling_days
         last_model = None
+        last_scaler = None
         for i in range(self.rolling_days, len(all_dates)):
             test_day = all_dates[i]
             start_day = all_dates[i - self.rolling_days]
@@ -64,6 +73,7 @@ class CGMTrainer:
             if (i - self.rolling_days) % self.cfg.train_freq == 0:
                 days_left = total_steps - (i - self.rolling_days)
                 logger.info(f"Training CGM model for {test_day} ({days_left} days left)")
-                last_model = self._train_single_on(rolling_data)
+                last_model, last_scaler = self._train_single_on(rolling_data)
             trained_models[test_day] = last_model
-        return trained_models
+            scalers[test_day] = last_scaler
+        return trained_models, scalers

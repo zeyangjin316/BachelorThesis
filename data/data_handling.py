@@ -1,5 +1,4 @@
 from datetime import datetime
-from data.data_scaling import SmartScaler
 from config import BASE_PATH, LTV_PATH, VIX_PATH
 
 import matplotlib.pyplot as plt
@@ -13,7 +12,6 @@ logger = logging.getLogger(__name__)
 class DataHandler:
     def __init__(self, split_point):
         self.reader = Reader()
-        self.scaler = None
         self.split_point = split_point
 
     def _split_data(self, data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -42,18 +40,37 @@ class DataHandler:
 
         return train_set, test_set
 
+    def _cut_pandemic_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Private function that removes data from 2020 onwards (pandemic period) from the dataframe.
+
+        Args:
+            df: DataFrame with a 'date' column
+
+        Returns:
+            DataFrame filtered to exclude data from 2020 onwards
+        """
+        logger.info("Filtering out pandemic data (2020 onwards)")
+
+        # Ensure date column is datetime
+        df = df.copy()
+        df['date'] = pd.to_datetime(df['date'])
+
+        # Filter to keep only data before 2020
+        pre_pandemic_df = df[df['date'] < '2020-01-01']
+
+        logger.info(f"Original data shape: {df.shape}, Pre-pandemic data shape: {pre_pandemic_df.shape}")
+
+        return pre_pandemic_df
+
     def _feature_filter(
             self,
             train_df: pd.DataFrame,
             target_col: str = "ret_crsp",
             exclude_cols: list[str] = None,
-            min_unique_frac: float = 0.001,  # drop near-constant: unique/rows <= this
-            corr_threshold: float = 0.95,  # drop one of any pair with |rho| >= threshold
-            corr_method: str = "spearman",
-            vif_threshold: float | None = None,  # set e.g. 10.0 to enable VIF pruning
     ):
         """
-        Decide feature drops using TRAIN ONLY to avoid leakage. Returns a report dict.
+        Remove duplicate features using TRAIN ONLY to avoid leakage. Returns a report dict.
         """
         if exclude_cols is None:
             exclude_cols = ["date", "sym_root", "permno"]
@@ -61,19 +78,9 @@ class DataHandler:
         cand = [c for c in numeric_cols if c not in set(exclude_cols + [target_col])]
 
         X = train_df[cand].copy()
-        dropped_constant, dropped_duplicates, dropped_corr, dropped_vif = [], [], [], []
+        dropped_duplicates = []
 
-        # 1) Near-constant
-        if len(X):
-            uniq_frac = X.nunique(dropna=False) / max(1, len(X))
-            const_cols = uniq_frac[uniq_frac <= min_unique_frac].index.tolist()
-            if const_cols:
-                dropped_constant += const_cols
-                X = X.drop(columns=const_cols, errors="ignore")
-
-        logger.info("Dropped constant columns: %s", dropped_constant)
-
-        # 2) Duplicates (exact dup columns)
+        # Remove duplicate columns (exact duplicate columns)
         if len(X.columns) > 1:
             keep_T = X.T.drop_duplicates(keep="first")
             keep_cols = keep_T.T.columns.tolist()
@@ -84,53 +91,10 @@ class DataHandler:
 
         logger.info("Dropped duplicate columns: %s", dropped_duplicates)
 
-        # 3) High correlation prune
-        if len(X.columns) > 1 and corr_threshold < 1.0:
-            corr = X.corr(method=corr_method).abs()
-            upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-            to_drop = [col for col in upper.columns if any(upper[col] >= corr_threshold)]
-            if to_drop:
-                dropped_corr += to_drop
-                X = X.drop(columns=to_drop, errors="ignore")
-
-        logger.info("Dropped highly correlated columns: %s", dropped_corr)
-
-        # 4) Optional VIF prune
-        if vif_threshold is not None and len(X.columns) > 1:
-            try:
-                import statsmodels.api as sm
-                from statsmodels.stats.outliers_influence import variance_inflation_factor
-
-                active = list(X.columns)
-                while len(active) > 1:
-                    Xv = X[active].fillna(X[active].median(numeric_only=True))
-                    Xv_const = sm.add_constant(Xv, has_constant="add")
-                    vifs = pd.Series(
-                        [variance_inflation_factor(Xv_const.values, i + 1)  # +1 skip constant
-                         for i in range(len(active))],
-                        index=active,
-                    )
-                    worst = vifs.idxmax()
-                    if vifs[worst] <= vif_threshold:
-                        break
-                    dropped_vif.append(worst)
-                    active.remove(worst)
-                X = X[active]
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "VIF step skipped (%s). Install 'statsmodels' for VIF filtering.",
-                    type(e).__name__,
-                )
-
-        logger.info("Dropped VIF-pruned columns: %s", dropped_vif)
-
         kept = list(X.columns)
         return {
             "kept": kept,
-            "dropped_constant": dropped_constant,
             "dropped_duplicates": dropped_duplicates,
-            "dropped_corr": dropped_corr,
-            "dropped_vif": dropped_vif,
         }
 
     def get_data(
@@ -152,6 +116,9 @@ class DataHandler:
             corr_threshold: float = 0.95,
             corr_method: str = "spearman",
             vif_threshold: float | None = None,  # set to 10.0 to enable
+            
+            # ---- pandemic data filter option ----
+            exclude_pandemic: bool = False,  # removes data from 2020 onwards
     ):
         """
         Load/merge data (optionally standardize), split into train/test, and optionally:
@@ -159,16 +126,16 @@ class DataHandler:
           - save_png: save a PNG picture of ONLY head(png_head_n) of full_data
           - filter_features: remove near-constant/duplicate/highly-correlated/(optional VIF) features
                              The decision is made on TRAIN ONLY (leak-safe) and then applied to all.
+          - exclude_pandemic: remove data from 2020 onwards to focus on pre-pandemic patterns
         """
         # ----- load & merge -----
         self.reader.read_data()
         self.reader.merge_all()
         full_data = self.reader.data
 
-        # ----- optional standardization -----
-        if standardize:
-            self.scaler = SmartScaler(full_data)
-            full_data = self.scaler.transform()
+        # ----- optional pandemic data filtering (before standardization/splitting) -----
+        if exclude_pandemic:
+            full_data = self._cut_pandemic_data(full_data)
 
         # ----- split FIRST (so filter is decided on training only) -----
         train_set, test_set = self._split_data(full_data)
@@ -180,10 +147,6 @@ class DataHandler:
                 train_df=train_set,
                 target_col=target_col,
                 exclude_cols=exclude_cols,
-                min_unique_frac=min_unique_frac,
-                corr_threshold=corr_threshold,
-                corr_method=corr_method,
-                vif_threshold=vif_threshold,
             )
             keep_feats = feature_filter_report["kept"]
             id_cols = exclude_cols or ["date", "sym_root", "permno"]
@@ -200,12 +163,9 @@ class DataHandler:
             test_set = test_set.loc[:, [c for c in final_cols if c in test_set.columns]]
 
             logging.getLogger(__name__).info(
-                "Feature filter kept %d features; dropped: const=%d, dup=%d, corr=%d, vif=%d",
+                "Feature filter kept %d features; dropped duplicates: %d",
                 len(keep_feats),
-                len(feature_filter_report["dropped_constant"]),
                 len(feature_filter_report["dropped_duplicates"]),
-                len(feature_filter_report["dropped_corr"]),
-                len(feature_filter_report["dropped_vif"]),
             )
 
         # ===== optional: save dataframe file (FULL, after filtering if any) =====
@@ -231,6 +191,13 @@ class DataHandler:
             else:
                 raise ValueError("df_format must be 'csv' or 'parquet'")
             df_save_path = df_path
+            # NEW: print info about saved dataframe
+            print(
+                f"[DataHandler] Saved dataframe to {df_save_path}\n"
+                f"  full_data shape: {full_data.shape} (rows x cols)\n"
+                f"  train_set shape: {train_set.shape}\n"
+                f"  test_set  shape: {test_set.shape}"
+            )
 
         # ===== optional: save PNG picture (HEAD ONLY, after filtering if any) =====
         from data.data_visualizer import _save_dataframe_png

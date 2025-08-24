@@ -38,7 +38,7 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\results\CGM_loss-ES_win20_tf20_ep10_bs256_ns100\summary.csv">
+        <entry key="\results\COMPARISON\20250819-232955\metrics.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

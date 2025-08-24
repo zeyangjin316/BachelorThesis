@@ -32,11 +32,16 @@ class CGMExperiment:
         self.pred_cfg = pred_cfg
 
         self.data_handler = DataHandler(self.data_cfg.split_point)
-        self.data_dict = self.data_handler.get_data(standardize=self.data_cfg.standardize, filter_features=True)
+        self.data_dict = self.data_handler.get_data(
+            filter_features=self.data_cfg.filter_features,
+            exclude_pandemic=self.data_cfg.exclude_pandemic)
         self.full_data = self.data_dict['full_data']
         self.train_data = self.data_dict['train_set']
         self.test_data = self.data_dict['test_set']
+        print(self.train_data.head)
+        print(self.test_data.head)
         self.trained_models: Dict[Any, Any] = {}
+        self.used_scalers: Dict[Any, Any] = {}
 
     def fit(self):
         initial_train_dates = self.train_data['date'].drop_duplicates().sort_values().tolist()
@@ -46,7 +51,7 @@ class CGMExperiment:
             cgm_init=self.cgm_init,
             fit_cfg=self.train_cfg,
         )
-        self.trained_models = trainer.train_all()
+        self.trained_models, self.used_scalers = trainer.train_all()
 
     def sample(self) -> np.ndarray:
         n_samples = self.pred_cfg.n_samples
@@ -62,9 +67,13 @@ class CGMExperiment:
             raw = model.predict([X_past, X_std, X_all, X_weekday],
                                 n_samples=n_samples,
                                 verbose=self.pred_cfg.verbose)
+            print(raw.shape)
             samples = raw[0, :, :]
-            self.data_handler.scaler.inverse_transform(TARGET_VAR, samples)
+            samples = self.used_scalers[test_day].inverse_transform(TARGET_VAR, samples)
             all_samples.append(samples)
+            print("Scaled forecast min/max:", raw.min(), raw.max())
+            print("Inverse forecast min/max:", samples.min(), samples.max())
+            print("Realized min/max:", self.test_data[TARGET_VAR].min(), self.test_data[TARGET_VAR].max())
         return np.stack(all_samples) if all_samples else np.empty((0, 0, 0))
 
     def evaluate(self, samples):

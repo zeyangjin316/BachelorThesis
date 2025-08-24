@@ -3,8 +3,8 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
 class SmartScaler:
-    def __init__(self, full_df: pd.DataFrame):
-        self.full_df = full_df
+    def __init__(self, data: pd.DataFrame):
+        self.data = data
         self.scalers = {}
         self._choose_scaler()
 
@@ -12,10 +12,10 @@ class SmartScaler:
         """
         Choose a scaling method for each numeric column based on distribution shape.
         """
-        numeric_cols = self.full_df.select_dtypes(include='number').columns
+        numeric_cols = self.data.select_dtypes(include='number').columns
 
         for col in numeric_cols:
-            series = self.full_df[col]
+            series = self.data[col]
             if series.nunique() <= 1 or series.std() == 0:
                 self.scalers[col] = None  # constant column, no scaling
                 continue
@@ -34,7 +34,7 @@ class SmartScaler:
         """
         Transform the full_df using the chosen scalers.
         """
-        df_transformed = self.full_df.copy()
+        df_transformed = self.data.copy()
         for col, scaler in self.scalers.items():
             if scaler is not None and col in df_transformed:
                 df_transformed[col] = scaler.transform(df_transformed[[col]].values).flatten()

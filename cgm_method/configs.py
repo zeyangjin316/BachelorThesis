@@ -4,7 +4,8 @@ from typing import Any
 @dataclass
 class CGMDataConfig:
     split_point: float | Any = 0.99
-    standardize: bool = True
+    filter_features: bool = False
+    exclude_pandemic: bool = False
 
 @dataclass
 class CGMInitConfig:

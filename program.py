@@ -42,6 +42,7 @@ def main():
     metrics_rows = []  # ONLY metrics per model
     samples = {"samples_cgm": None, "samples_two_step": None}
 
+    "Only relevant if data_only is chosen"
     data_handler_params = {
         "split_point": 0.95,
     }
@@ -49,8 +50,9 @@ def main():
     # === Parameter Definitions ===
     cgm_params = {
         "data_cfg": CGMDataConfig(
-            split_point=0.95,
-            standardize=True
+            split_point=0.9,
+            filter_features=True,
+            exclude_pandemic=True
         ),
         "cgm_init": CGMInitConfig(
             dim_latent=50,
@@ -58,26 +60,26 @@ def main():
             emb_size=2
         ),
         "train_cfg": CGMFitConfig(
-            n_epochs=10,
-            batch_size=256,
+            n_epochs=50,
+            batch_size=128,
             train_freq=30,
             train_window_size=20,
-            learningrate=0.001,  # or "decay"
+            learningrate=0.0001,  # or "decay"
             verbose=1,
             callbacks=None,
-            validation_split=0.0,
+            validation_split=0.1,
             validation_data=None,
             sample_weight=None
         ),
         "pred_cfg": CGMSampleConfig(
-            n_samples=1000,
+            n_samples=500,
             verbose=0
         ),
     }
 
     ts_params = {
         "data_config": TSDataConfig(
-            split_point=0.95,
+            split_point=0.9,
         ),
         "init_config": TSInitConfig(
             univariate_type="ARMAGARCH",
@@ -112,10 +114,10 @@ def main():
 
     if choice in {"data_only"}:
         logging.info("Running Data Preparation")
-        data_handler = DataHandler(data_handler_params["split_point"])
+        data_handler = DataHandler(data_handler_params["split_point"],)
 
         out = data_handler.get_data(
-            standardize=False, filter_features=True,
+            standardize=False, filter_features=True, exclude_pandemic=True,
             save_df=True, df_path="plots/dataframe.csv", df_format="csv",
             save_png=True, png_path="plots/dataframe.png", png_head_n=20
         )
