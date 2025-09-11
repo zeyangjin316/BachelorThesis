@@ -62,7 +62,7 @@ def main():
         "train_cfg": CGMFitConfig(
             n_epochs=50,
             batch_size=128,
-            train_freq=30,
+            train_freq=15,
             train_window_size=20,
             learningrate=0.0001,  # or "decay"
             verbose=1,
