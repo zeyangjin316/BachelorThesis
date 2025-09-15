@@ -1,12 +1,12 @@
 from cgm_method.cgm_experiment import CGMExperiment
 from copula_method.two_step_experiment import TwoStepExperiment
 
-def run_experiment(model_type, params, fit_model=True, sample_model=True, evaluate=True):
+def run_experiment(model_type, config_params, fit_model=True, sample_model=True, evaluate=True):
     if model_type == "cgm_method":
-        model = CGMExperiment(**params)
+        model = CGMExperiment(**config_params)
 
     elif model_type == "2step":
-        model = TwoStepExperiment(**params)
+        model = TwoStepExperiment(**config_params)
 
     else:
         raise ValueError(f"Unknown model_type '{model_type}'")

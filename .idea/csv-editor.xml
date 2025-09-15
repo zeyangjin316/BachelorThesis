@@ -38,6 +38,20 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\results\CGM\20250826-101253\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\CGM\20250914-163847\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\results\COMPARISON\20250819-232955\metrics.csv">
           <value>
             <Attribute>
@@ -52,7 +66,21 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\results\TWOSTEP\20250914-162654\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\results\descriptives\ret_crsp_summary_by_symbol.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\final_data_20250915-131456.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

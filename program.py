@@ -55,16 +55,16 @@ def main():
             exclude_pandemic=True
         ),
         "cgm_init": CGMInitConfig(
-            dim_latent=50,
+            dim_latent=128,
             n_samples_train=100,
-            emb_size=2
+            emb_size=4
         ),
         "train_cfg": CGMFitConfig(
-            n_epochs=50,
-            batch_size=128,
-            train_freq=15,
-            train_window_size=20,
-            learningrate=0.0001,  # or "decay"
+            n_epochs=100,
+            batch_size=512,
+            train_freq=30,
+            train_window_size=100,
+            learningrate=0.00005,  # or "decay"
             verbose=1,
             callbacks=None,
             validation_split=0.1,
@@ -72,7 +72,7 @@ def main():
             sample_weight=None
         ),
         "pred_cfg": CGMSampleConfig(
-            n_samples=500,
+            n_samples=1000,
             verbose=0
         ),
     }
@@ -87,7 +87,7 @@ def main():
             rolling_window_size=1,
             copula_refit_freq=30,
             uv_fit_percentage=0.2,
-            uv_refit_freq=1
+            uv_refit_freq=7
         ),
         "fit_config": TSFitConfig(
             arma_order=(1, 1),
@@ -114,14 +114,36 @@ def main():
 
     if choice in {"data_only"}:
         logging.info("Running Data Preparation")
-        data_handler = DataHandler(data_handler_params["split_point"],)
+        # 1) initialize handler
+        dh = DataHandler(split_point=0.8)
 
-        out = data_handler.get_data(
-            standardize=False, filter_features=True, exclude_pandemic=True,
-            save_df=True, df_path="plots/dataframe.csv", df_format="csv",
-            save_png=True, png_path="plots/dataframe.png", png_head_n=20
+        # 2) run pipeline
+        result = dh.get_data(
+            return_col="ret_crsp",
+            har_windows=(5, 21, 63),
+            hl_days=(1, 5, 21, 63),
+            exclude_pandemic=False,
+            filter_features=False,
+            save_df=True,
+            save_png=True,  # enable PNG
+            png_path="results/full_data_preview.png",  # custom path
+            png_head_n=50,  # show first 50 rows
+            png_dpi=200,
         )
-        return
+
+        full_df = result["full_data"]
+        train_df = result["train_set"]
+        test_df = result["test_set"]
+        png_path = result["png_save_path"]
+
+        print("Full dataset:", full_df.shape)
+        print("Train set:", train_df.shape)
+        print("Test set:", test_df.shape)
+
+        print("\nColumns in final dataset:")
+        print(full_df.columns.tolist())
+
+        print("\nPNG preview saved at:", png_path)
 
     if choice in {"cgm", "comparison"}:
         logging.info("Running CGM Experiment")

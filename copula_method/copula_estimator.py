@@ -30,7 +30,7 @@ def tqdm_joblib(tqdm_object):
 
 logger = logging.getLogger(__name__)
 
-class CopulaCalibrator:
+class CopulaEstimator:
     """
     For each test day t:
       - Take k days of history ending at t-1

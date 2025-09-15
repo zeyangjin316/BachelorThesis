@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.stats import norm
 from tqdm import tqdm
 
-from copula_method import CopulaCalibrator
+from copula_method import CopulaEstimator
 from evaluator import ForecastEvaluator
 from data.data_handling import DataHandler
 from copula_method import TSDataConfig, TSInitConfig, TSFitConfig, TSSampleConfig
@@ -39,7 +39,7 @@ class TwoStepExperiment:
         self.data_dict = data_handler.get_data(standardize=False, filter_features=True, exclude_pandemic=True)
 
     def fit(self):
-        calibrator = CopulaCalibrator(self.data_dict, self.init_config, self.fit_config, self.sample_config)
+        calibrator = CopulaEstimator(self.data_dict, self.init_config, self.fit_config, self.sample_config)
         # Parallel across test days
         import os
         n_jobs = max(1, os.cpu_count() - 1) # leave one core free, set n_jobs=-1 for all cores
@@ -64,7 +64,7 @@ class TwoStepExperiment:
             self.fit()
         elif not self.day_marginals:
             logger.info("No day-t marginals found; building them now.")
-            calibrator = CopulaCalibrator(self.data_dict, self.init_config, self.fit_config, self.sample_config)
+            calibrator = CopulaEstimator(self.data_dict, self.init_config, self.fit_config, self.sample_config)
             self.day_marginals = calibrator.build_day_marginals(n_samples)
 
         all_day_samples = np.full((n_days, n_symbols, n_samples), np.nan, dtype=float)

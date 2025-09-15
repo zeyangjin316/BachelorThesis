@@ -163,7 +163,71 @@ def cvs_sample(y_true, y_pred, p=0.5, return_single_scores=False):
     
     return vs_sample(y_true_pobs, y_predict_pobs, p=p, return_single_scores=return_single_scores)
 
+def dss_sample(y_true, y_pred, return_single_scores=False, jitter_list=(1e-8, 1e-6, 1e-4, 1e-2)):
+    """
+    Compute mean Dawid–Sebastiani Score (DSS) from samples of the predictive distribution.
+    DSS_i = log det(Σ_i) + (y_i - μ_i)^T Σ_i^{-1} (y_i - μ_i),
+    where μ_i and Σ_i are the predictive mean and covariance estimated from the samples for example i.
 
+    Parameters
+    ----------
+    y_true : array, shape (n_examples, n_dim)
+        True values.
+    y_pred : array, shape (n_examples, n_dim, n_samples)
+        Samples from predictive distribution.
+    return_single_scores : bool, optional
+        Return score for single examples. The default is False.
+    jitter_list : tuple of float, optional
+        Sequence of diagonal jitters added to Σ to ensure positive definiteness.
+
+    Returns
+    -------
+    float or tuple of (float, array)
+        Mean DSS. If return_single_scores is True, also returns per-example scores.
+    """
+    assert len(y_pred.shape) == 3, "y_pred must be a three dimesnional array of shape (n_examples, n_dim, n_samples)"
+    assert len(y_true.shape) == 2, "y_true must be a two dimesnional array of shape (n_examples, n_dim)"
+    assert y_true.shape[0] == y_pred.shape[0], "y_true and y_pred must contain same number of examples."
+    assert y_true.shape[1] == y_pred.shape[1], "Examples in y_true and y_pred must have same dimension."
+
+    N, D, M = y_pred.shape
+    scores = np.zeros(N)
+
+    for i in range(N):
+        Y = y_pred[i, :, :]               # shape (D, M)
+        mu = np.mean(Y, axis=1)           # shape (D,)
+        # MLE covariance (divide by M, not M-1) for consistency with predictive samples
+        Sigma = np.cov(Y, bias=True) if D > 1 else np.array([[np.var(Y, axis=1, ddof=0)[0]]])
+
+        delta = y_true[i, :] - mu         # shape (D,)
+
+        # Stabilize covariance and compute DSS
+        dss_i = None
+        I = np.eye(D)
+        for eps in jitter_list:
+            Sigma_reg = Sigma + eps * I
+            try:
+                sign, logdet = np.linalg.slogdet(Sigma_reg)
+                if sign <= 0:
+                    continue
+                # Solve Σ^{-1} delta via linear solve for stability
+                sol = np.linalg.solve(Sigma_reg, delta)
+                quad = float(delta @ sol)
+                dss_i = logdet + quad
+                break
+            except np.linalg.LinAlgError:
+                continue
+
+        # If still failing (extremely degenerate), fall back to large penalty
+        if dss_i is None:
+            dss_i = np.inf
+
+        scores[i] = dss_i
+
+    if return_single_scores:
+        return float(np.mean(scores)), scores
+    else:
+        return float(np.mean(scores))
 
 def _get_pobs(y, dat):
     """ Obtain pseudo observations for dat as well as for y under the distribution represented by samples in dat[i,d,:]."""

@@ -1,6 +1,6 @@
-import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 class SmartScaler:
     def __init__(self, data: pd.DataFrame):
@@ -30,18 +30,31 @@ class SmartScaler:
 
             self.scalers[col] = scaler.fit(series.values.reshape(-1, 1))
 
-    def transform(self) -> pd.DataFrame:
+    def transform(self, data) -> pd.DataFrame:
         """
-        Transform the full_df using the chosen scalers.
+        Transform the data using the chosen scalers.
+        Strictly verifies that inverse_transform(transform(x)) == x (within tolerance).
         """
-        df_transformed = self.data.copy()
+        df_transformed = data.copy()
         for col, scaler in self.scalers.items():
             if scaler is not None and col in df_transformed:
-                df_transformed[col] = scaler.transform(df_transformed[[col]].values).flatten()
+                scaled = scaler.transform(df_transformed[[col]].values).flatten()
+                df_transformed[col] = scaled
+
+                # --- Strict consistency check ---
+                inv = scaler.inverse_transform(scaled.reshape(-1, 1)).flatten()
+                orig = data[col].values
+                if not np.allclose(inv, orig, atol=1e-6, rtol=1e-6):
+                    raise ValueError(
+                        f"[SmartScaler] Roundtrip check failed for column '{col}'.\n"
+                        f"Original vs inverse(transform) differ!"
+                    )
         return df_transformed
 
     def inverse_transform(self, variable: str, data):
-
+        """
+        Apply inverse transformation for a single variable.
+        """
         scaler = self.scalers.get(variable)
         if scaler is None:
             return data  # No transform was originally applied

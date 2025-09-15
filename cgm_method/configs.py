@@ -3,9 +3,9 @@ from typing import Any
 
 @dataclass
 class CGMDataConfig:
-    split_point: float | Any = 0.99
+    split_point: float | Any = 0.95
     filter_features: bool = False
-    exclude_pandemic: bool = False
+    exclude_pandemic: bool = True
 
 @dataclass
 class CGMInitConfig:
@@ -16,13 +16,13 @@ class CGMInitConfig:
 @dataclass
 class CGMFitConfig:
     n_epochs: int = 100
-    batch_size: int = 1024
-    train_freq: int = 20
-    train_window_size: int = 20
-    learningrate: float | str = 0.01
+    batch_size: int = 512
+    train_freq: int = 30
+    train_window_size: int = 50
+    learningrate: float | str = 0.001
     verbose: int = 1
     callbacks: Any = None
-    validation_split: float = 0.0
+    validation_split: float = 0.1
     validation_data: Any = None
     sample_weight: Any = None
 

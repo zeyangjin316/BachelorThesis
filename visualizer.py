@@ -48,21 +48,22 @@ class ForecastPlotter:
         return {s: mcolors.to_rgba(cmap(i)) for i, s in enumerate(symbols)}
 
     def plot_multivariate_forecasts(
-        self,
-        *,
-        path_cgm: str,
-        path_ts: str,
-        symbols_order: List[str],
-        symbols_to_plot: Optional[Iterable[str]] = None,
-        sample_to_plot: int = 0,
-        save_dir: str = "results/plots",
-        standardize: bool = False,
-        filter_features: bool = True,
-        exclude_pandemic: bool = True,
-        show: bool = True,
-        save_png: bool = True,
-        save_pdf: bool = False,
-        add_legend: bool = True,
+            self,
+            *,
+            path_cgm: str,
+            path_ts: str,
+            symbols_order: List[str],
+            symbols_to_plot: Optional[Iterable[str]] = None,
+            sample_to_plot: int = 0,
+            save_dir: str = "results/plots",
+            standardize: bool = False,
+            filter_features: bool = True,
+            exclude_pandemic: bool = True,
+            show: bool = True,
+            save_png: bool = True,
+            save_pdf: bool = False,
+            add_legend: bool = True,
+            colors: Optional[Dict[str, str]] = None,  # NEW: choose line colors
     ) -> Dict[str, str]:
         """
         Plot time series per selected symbol comparing a single forecast *sample* from
@@ -92,17 +93,31 @@ class ForecastPlotter:
             If True, also save a PDF per symbol.
         add_legend : bool
             If True, include a legend on each plot.
+        colors : dict, optional
+            Mapping to set line colors for each series. Keys:
+              - "cgm": color for the CGM forecast line
+              - "two_step": color for the Two-Step forecast line
+              - "realized": color for the realized series line
+            Example:
+              {"cgm": "tab:blue", "two_step": "tab:orange", "realized": "black"}
+            If omitted or a key is missing, matplotlib defaults will be used for that line.
 
         Returns
         -------
         dict
             Mapping symbol -> saved PNG path (if save_png) or last saved path.
         """
+        import os
+        from typing import Dict, Iterable, List, Optional
+        import numpy as np
+        import pandas as pd
+        import matplotlib.pyplot as plt
+
         os.makedirs(save_dir, exist_ok=True)
 
         # ---- Load samples ----
         samples_cgm = np.load(path_cgm)  # (n_origins, n_symbols, n_samples)
-        samples_ts = np.load(path_ts)    # same shape semantics
+        samples_ts = np.load(path_ts)  # same shape semantics
 
         if samples_cgm.ndim != 3 or samples_ts.ndim != 3:
             raise ValueError("Expected 3D arrays for both samples files")
@@ -128,7 +143,7 @@ class ForecastPlotter:
 
         # Slice to aligned origins and select a common sample
         sample_cgm = samples_cgm[:n_origins, :, sample_to_plot]  # (n_origins, n_symbols)
-        sample_ts  = samples_ts[:n_origins, :, sample_to_plot]
+        sample_ts = samples_ts[:n_origins, :, sample_to_plot]
 
         # ---- Load data using DataHandler (same configuration as experiments) ----
         data_dict = self.data_handler.get_data(
@@ -150,7 +165,7 @@ class ForecastPlotter:
 
         # ---- Create sample DataFrames with the correct dates ----
         df_sample_cgm = pd.DataFrame(sample_cgm, index=test_dates, columns=symbols_order)
-        df_sample_ts  = pd.DataFrame(sample_ts,  index=test_dates, columns=symbols_order)
+        df_sample_ts = pd.DataFrame(sample_ts, index=test_dates, columns=symbols_order)
 
         # ---- Get realized returns for the sample dates ----
         real_data = test_set[test_set["date"].isin(test_dates)]
@@ -166,15 +181,33 @@ class ForecastPlotter:
         if missing:
             raise ValueError(f"symbols_to_plot contains unknown symbols: {missing}")
 
+        # Colors handling (optional; fall back to mpl defaults if not provided)
+        colors = colors or {}
+        color_cgm = colors.get("cgm")
+        color_ts = colors.get("two_step")
+        color_real = colors.get("realized")
+
         saved_paths: Dict[str, str] = {}
 
         # ---- Plot: time series per selected symbol ----
         for sym in symbols:
             plt.figure(figsize=(10, 6))
 
-            plt.plot(df_sample_cgm.index, df_sample_cgm[sym], linewidth=2, label=f"CGM sample {sample_to_plot}")
-            plt.plot(df_sample_ts.index,  df_sample_ts[sym],  linewidth=2, label=f"Two-Step sample {sample_to_plot}")
-            plt.plot(df_real.index,       df_real[sym],       linewidth=2, label="Realized")
+            plt.plot(
+                df_sample_cgm.index, df_sample_cgm[sym],
+                linewidth=2, label=f"CGM sample {sample_to_plot}",
+                color=color_cgm,
+            )
+            plt.plot(
+                df_sample_ts.index, df_sample_ts[sym],
+                linewidth=2, label=f"Two-Step sample {sample_to_plot}",
+                color=color_ts,
+            )
+            plt.plot(
+                df_real.index, df_real[sym],
+                linewidth=2, label="Realized",
+                color=color_real,
+            )
 
             # dynamic y-axis range with margin
             all_vals = pd.concat([df_sample_cgm[sym], df_sample_ts[sym], df_real[sym]])
@@ -479,27 +512,95 @@ class ForecastPlotter:
         else:
             plt.close(fig)
 
-        # ---- 6) Boxplot ----
+        # ---- 6) Boxplot (compare with vs. without COVID period) ----
+        import matplotlib.patches as mpatches
+        import matplotlib.lines as mlines
+
+        # Build full-sample and "excl. pandemic" datasets from the same ret_wide
+        pandemic_start = pd.to_datetime("2020-03-01")
+        pandemic_end = pd.to_datetime("2020-06-30")
+        mask_covid = (ret_wide.index >= pandemic_start) & (ret_wide.index <= pandemic_end)
+
+        ret_wide_excl = ret_wide.loc[~mask_covid]
+
+        # Prepare data per symbol (drop NAs)
+        data_full = [ret_wide[s].dropna().values for s in symbols]
+        data_excl = [ret_wide_excl[s].dropna().values for s in symbols]
+
+        # Also compute means (to show that the mean ≠ 0)
+        means_full = [np.nanmean(a) if len(a) else np.nan for a in data_full]
+        means_excl = [np.nanmean(a) if len(a) else np.nan for a in data_excl]
+
         plt.figure(figsize=(12, 6))
-        bp = plt.boxplot(
-            [ret_wide[s].dropna().values for s in symbols],
-            labels=symbols, vert=True, showfliers=False, patch_artist=True
+
+        # positions for side-by-side boxes
+        x = np.arange(1, len(symbols) + 1, dtype=float)
+        offset = 0.18
+        w = 0.32
+
+        bp_full = plt.boxplot(
+            data_full, positions=x - offset, widths=w, vert=True,
+            showfliers=False, patch_artist=True
+        )
+        bp_excl = plt.boxplot(
+            data_excl, positions=x + offset, widths=w, vert=True,
+            showfliers=False, patch_artist=True
         )
 
-        # Color each box with its symbol color
-        for patch, s in zip(bp["boxes"], symbols):
+        # color each box with its symbol color; use alpha/hatch to distinguish groups
+        for patch, s in zip(bp_full["boxes"], symbols):
             patch.set_facecolor(symbol_colors[s])
-        for median, s in zip(bp["medians"], symbols):
-            median.set_color("black")  # keep medians visible
-        for whisker in bp["whiskers"]:
-            whisker.set_color("gray")
-        for cap in bp["caps"]:
+            patch.set_alpha(0.45)  # all data: lighter fill
+            patch.set_edgecolor("black")
+
+        for patch, s in zip(bp_excl["boxes"], symbols):
+            patch.set_facecolor(symbol_colors[s])
+            patch.set_alpha(0.9)  # excl. pandemic: stronger fill
+            patch.set_hatch("//")  # print-friendly distinction
+            patch.set_edgecolor("black")
+
+        # style other box elements for visibility
+        for med in bp_full["medians"] + bp_excl["medians"]:
+            med.set_color("black")
+        for whisk in bp_full["whiskers"] + bp_excl["whiskers"]:
+            whisk.set_color("gray")
+        for cap in bp_full["caps"] + bp_excl["caps"]:
             cap.set_color("gray")
 
+        # --- NEW: overlay per-group mean markers (diamonds), colored by symbol
+        for xi, s, m_full, m_excl in zip(x, symbols, means_full, means_excl):
+            if np.isfinite(m_full):
+                plt.scatter(
+                    xi - offset, m_full, marker="D", s=42,
+                    facecolors=symbol_colors[s], edgecolors="black", linewidths=0.6, zorder=3
+                )
+            if np.isfinite(m_excl):
+                plt.scatter(
+                    xi + offset, m_excl, marker="D", s=42,
+                    facecolors=symbol_colors[s], edgecolors="black", linewidths=0.6, zorder=3
+                )
+
+        # --- NEW: horizontal zero line for quick reference
+        plt.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
+
+        # axes/labels/ticks
         plt.xlabel("Symbol")
         plt.ylabel("ret_crsp")
-        plt.xticks(rotation=45, ha="right")
+        plt.xticks(x, symbols, rotation=45, ha="right")
+        plt.grid(axis="y", alpha=0.3)
         plt.tight_layout()
+
+        # legend (sample-independent)
+        legend_handles = [
+            mpatches.Patch(facecolor="gray", alpha=0.45, edgecolor="black", label="All data"),
+            mpatches.Patch(facecolor="gray", alpha=0.9, hatch="//", edgecolor="black",
+                           label="Excl. pandemic (Mar–Jun 2020)"),
+            mlines.Line2D([], [], color="black", marker="D", linestyle="None", markersize=6,
+                          markerfacecolor="white", markeredgecolor="black", label="Mean"),
+        ]
+        plt.legend(handles=legend_handles, loc="best", frameon=True, framealpha=0.9)
+
+        # keep the SAME filename and outputs key as before
         if save_png:
             p = os.path.join(save_dir, "boxplot_by_symbol.png")
             plt.savefig(p, dpi=300)
@@ -571,11 +672,10 @@ class ForecastPlotter:
 
 
 if __name__ == "__main__":
-    # Example CLI-like usage; adjust as needed.
     os.makedirs("results/plots", exist_ok=True)
 
-    PATH_CGM = "results/CGM/20250826-101253/samples_cgm.npy"
-    PATH_TS  = "results/COMPARISON/20250819-232955/samples_two_step.npy"
+    PATH_CGM = "results/CGM/20250914-163847/samples_cgm.npy"
+    PATH_TS  = "results/TWOSTEP/20250914-162654/samples_two_step.npy"
 
     symbols_order = [
         "MSFT", "XOM", "GE", "AAPL", "CAT", "BA", "PFE", "JNJ", "MRK", "JPM"

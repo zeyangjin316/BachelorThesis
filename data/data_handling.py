@@ -1,271 +1,163 @@
+from __future__ import annotations
 from datetime import datetime
-from config import BASE_PATH, LTV_PATH, VIX_PATH
-
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-import logging
+from typing import Optional, List, Tuple
 import os
+import logging
+import pandas as pd
+
+from config import BASE_PATH, LTV_PATH, VIX_PATH, INTRADAY_PATH
+from data.reader import Reader
+from data.features import add_daily_variance_features, ANNUALIZE as FE_ANNUALIZE
 
 logger = logging.getLogger(__name__)
 
 class DataHandler:
-    def __init__(self, split_point):
-        self.reader = Reader()
+    """
+    Load merged dataset, add daily variance features, and split into train/test.
+    Intraday RV is pre-computed by Reader and already present as RV5m_d/Vol5m_d.
+    """
+    def __init__(self, split_point: float | datetime):
+        if not (isinstance(split_point, float) or isinstance(split_point, datetime)):
+            raise ValueError("split_point must be float in (0,1) or datetime")
+        if isinstance(split_point, float) and not (0.0 < split_point < 1.0):
+            raise ValueError("float split_point must lie in (0,1)")
+
         self.split_point = split_point
+        self.reader = Reader(BASE_PATH, LTV_PATH, VIX_PATH, INTRADAY_PATH)
 
-    def _split_data(self, data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Split the data into training and test sets based on split_point, handling each time series individually.
-        """
-        logger.info("Splitting data with split_point: %s", self.split_point)
+    def _split_by_symbol(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Split per symbol by percentage or datetime."""
+        df = df.sort_values(["sym_root", "date"])
 
-        def split_symbol_data(symbol_df):
+        def _split_group(g: pd.DataFrame):
             if isinstance(self.split_point, float):
-                split_idx = int(len(symbol_df) * self.split_point)
-                return symbol_df.iloc[:split_idx], symbol_df.iloc[split_idx:]
-            elif isinstance(self.split_point, datetime):
-                train_df = symbol_df[symbol_df['date'] <= self.split_point]
-                test_df = symbol_df[symbol_df['date'] > self.split_point]
-                return train_df, test_df
+                idx = int(len(g) * self.split_point)
+                return g.iloc[:idx], g.iloc[idx:]
             else:
-                raise ValueError("split_point must be either float or datetime")
+                return g[g["date"] <= self.split_point], g[g["date"] > self.split_point]
 
-        split_dfs = data.groupby('sym_root').apply(lambda group: split_symbol_data(group))
-        train_dfs = [train for train, _ in split_dfs]
-        test_dfs = [test for _, test in split_dfs]
+        parts = df.groupby("sym_root").apply(_split_group)
+        train = pd.concat([a for a, _ in parts], axis=0).sort_values(["sym_root", "date"])
+        test  = pd.concat([b for _, b in parts], axis=0).sort_values(["sym_root", "date"])
+        return train, test
 
-        train_set = pd.concat(train_dfs).sort_index()
-        test_set = pd.concat(test_dfs).sort_index()
-
-        return train_set, test_set
-
-    def _cut_pandemic_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Private function that removes data from 2020 onwards (pandemic period) from the dataframe.
-
-        Args:
-            df: DataFrame with a 'date' column
-
-        Returns:
-            DataFrame filtered to exclude data from 2020 onwards
-        """
-        logger.info("Filtering out pandemic data (2020 onwards)")
-
-        # Ensure date column is datetime
-        df = df.copy()
-        df['date'] = pd.to_datetime(df['date'])
-
-        # Filter to keep only data before 2020
-        pre_pandemic_df = df[df['date'] < '2020-01-01']
-
-        logger.info(f"Original data shape: {df.shape}, Pre-pandemic data shape: {pre_pandemic_df.shape}")
-
-        return pre_pandemic_df
-
-    def _feature_filter(
-            self,
-            train_df: pd.DataFrame,
-            target_col: str = "ret_crsp",
-            exclude_cols: list[str] = None,
-    ):
-        """
-        Remove duplicate features using TRAIN ONLY to avoid leakage. Returns a report dict.
-        """
+    def _feature_filter(self, train_df: pd.DataFrame, target_col: str, exclude_cols: Optional[List[str]]) -> dict:
+        """Remove exact-duplicate numeric columns using the training set only."""
         if exclude_cols is None:
             exclude_cols = ["date", "sym_root", "permno"]
-        numeric_cols = train_df.select_dtypes(include=[np.number]).columns.tolist()
-        cand = [c for c in numeric_cols if c not in set(exclude_cols + [target_col])]
-
+        num_cols = train_df.select_dtypes(include="number").columns.tolist()
+        cand = [c for c in num_cols if c not in set(exclude_cols + [target_col])]
         X = train_df[cand].copy()
-        dropped_duplicates = []
-
-        # Remove duplicate columns (exact duplicate columns)
+        dropped = []
         if len(X.columns) > 1:
             keep_T = X.T.drop_duplicates(keep="first")
             keep_cols = keep_T.T.columns.tolist()
-            dup_cols = [c for c in X.columns if c not in keep_cols]
-            if dup_cols:
-                dropped_duplicates += dup_cols
-                X = X[keep_cols]
-
-        logger.info("Dropped duplicate columns: %s", dropped_duplicates)
-
-        kept = list(X.columns)
-        return {
-            "kept": kept,
-            "dropped_duplicates": dropped_duplicates,
-        }
+            dropped = [c for c in X.columns if c not in keep_cols]
+        kept = [c for c in X.columns if c not in dropped]
+        return {"kept": kept, "dropped_duplicates": dropped}
 
     def get_data(
-            self,
-            standardize: bool = False,
-            save_df: bool = False,
-            df_path: str | None = None,
-            df_format: str = "csv",  # "csv" or "parquet"
-            save_png: bool = False,
-            png_path: str | None = None,
-            png_head_n: int = 100,
-            png_dpi: int = 200,
+        self,
+        # feature params
+        return_col: str = "ret_crsp",
+        har_windows: Tuple[int, ...] = (5, 21, 63),
+        hl_days: Tuple[int, ...] = (1, 5, 21, 63),
 
-            # ---- feature filter options (new) ----
-            filter_features: bool = False,
-            target_col: str = "ret_crsp",
-            exclude_cols: list[str] | None = None,  # e.g. ["date","sym_root","permno"]
-            min_unique_frac: float = 0.001,
-            corr_threshold: float = 0.95,
-            corr_method: str = "spearman",
-            vif_threshold: float | None = None,  # set to 10.0 to enable
-            
-            # ---- pandemic data filter option ----
-            exclude_pandemic: bool = False,  # removes data from 2020 onwards
-    ):
-        """
-        Load/merge data (optionally standardize), split into train/test, and optionally:
-          - save_df: write the full merged dataframe (full_data) to CSV/Parquet
-          - save_png: save a PNG picture of ONLY head(png_head_n) of full_data
-          - filter_features: remove near-constant/duplicate/highly-correlated/(optional VIF) features
-                             The decision is made on TRAIN ONLY (leak-safe) and then applied to all.
-          - exclude_pandemic: remove data from 2020 onwards to focus on pre-pandemic patterns
-        """
-        # ----- load & merge -----
-        self.reader.read_data()
-        self.reader.merge_all()
-        full_data = self.reader.data
+        # data hygiene
+        exclude_pandemic: bool = False,
 
-        # ----- optional pandemic data filtering (before standardization/splitting) -----
+        # optional feature pruning
+        filter_features: bool = False,
+        target_col: str = "ret_crsp",
+        exclude_cols: Optional[List[str]] = None,
+
+        # saving
+        save_df: bool = False,
+        df_path: Optional[str] = None,
+        df_format: str = "csv",
+
+        # PNG preview (restored)
+        save_png: bool = False,
+        png_path: Optional[str] = None,
+        png_head_n: int = 100,
+        png_dpi: int = 200,
+    ) -> dict:
+        """
+        Load, engineer features, split, and optionally save CSV/Parquet and a PNG preview of head(full_data).
+        """
+        # Load and merge sources
+        self.reader.read_all()
+        df = self.reader.data.copy()
+        df["date"] = pd.to_datetime(df["date"])
+
+        # Optional cut
         if exclude_pandemic:
-            full_data = self._cut_pandemic_data(full_data)
+            df = df[df["date"] < "2020-01-01"]
 
-        # ----- split FIRST (so filter is decided on training only) -----
-        train_set, test_set = self._split_data(full_data)
+        # Daily variance/volatility features
+        df = add_daily_variance_features(
+            df=df,
+            return_col=return_col,
+            har_windows=har_windows,
+            hl_days=hl_days,
+            annualize=FE_ANNUALIZE,
+        )
 
-        # ----- feature filter (optional) -----
+        # --- remove artificial zeros ---
+        var_cols = [c for c in df.columns if any(tag in c.lower() for tag in ["rv", "vol", "semivar", "downvol"])]
+        df = df.loc[~(df[var_cols] == 0).any(axis=1)]
+
+        # Split
+        train_set, test_set = self._split_by_symbol(df)
+
+        # Optional duplicate feature filter
         feature_filter_report = None
         if filter_features:
-            feature_filter_report = self._feature_filter(
-                train_df=train_set,
-                target_col=target_col,
-                exclude_cols=exclude_cols,
-            )
+            feature_filter_report = self._feature_filter(train_set, target_col, exclude_cols)
             keep_feats = feature_filter_report["kept"]
             id_cols = exclude_cols or ["date", "sym_root", "permno"]
+            col_order = [c for c in id_cols + [target_col] + keep_feats if c in df.columns]
+            df = df[col_order]
+            train_set = train_set[[c for c in col_order if c in train_set.columns]]
+            test_set  = test_set[[c for c in col_order if c in test_set.columns]]
 
-            # build final column order: ids + target + kept features
-            final_cols = []
-            for c in id_cols + [target_col] + keep_feats:
-                if c in full_data.columns and c not in final_cols:
-                    final_cols.append(c)
-
-            # apply to all splits
-            full_data = full_data.loc[:, [c for c in final_cols if c in full_data.columns]]
-            train_set = train_set.loc[:, [c for c in final_cols if c in train_set.columns]]
-            test_set = test_set.loc[:, [c for c in final_cols if c in test_set.columns]]
-
-            logging.getLogger(__name__).info(
-                "Feature filter kept %d features; dropped duplicates: %d",
-                len(keep_feats),
-                len(feature_filter_report["dropped_duplicates"]),
-            )
-
-        # ===== optional: save dataframe file (FULL, after filtering if any) =====
+        # Save CSV/Parquet
         df_save_path = None
         if save_df:
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            stamp = pd.Timestamp.now().strftime("%Y%m%d-%H%M%S")
             if df_path is None:
                 os.makedirs("results", exist_ok=True)
                 ext = "csv" if df_format.lower() == "csv" else "parquet"
                 df_path = os.path.join("results", f"final_data_{stamp}.{ext}")
-
             os.makedirs(os.path.dirname(df_path) or ".", exist_ok=True)
-            fmt = df_format.lower()
-            if fmt == "csv":
-                full_data.to_csv(df_path, index=False)
-            elif fmt == "parquet":
+            if df_format.lower() == "csv":
+                df.to_csv(df_path, index=False)
+            else:
                 try:
-                    full_data.to_parquet(df_path, index=False)
-                except (ImportError, ModuleNotFoundError):
+                    df.to_parquet(df_path, index=False)
+                except Exception:
                     stem, _ = os.path.splitext(df_path)
                     df_path = f"{stem}.csv"
-                    full_data.to_csv(df_path, index=False)
-            else:
-                raise ValueError("df_format must be 'csv' or 'parquet'")
+                    df.to_csv(df_path, index=False)
             df_save_path = df_path
-            # NEW: print info about saved dataframe
-            print(
-                f"[DataHandler] Saved dataframe to {df_save_path}\n"
-                f"  full_data shape: {full_data.shape} (rows x cols)\n"
-                f"  train_set shape: {train_set.shape}\n"
-                f"  test_set  shape: {test_set.shape}"
-            )
 
-        # ===== optional: save PNG picture (HEAD ONLY, after filtering if any) =====
-        from data.data_visualizer import _save_dataframe_png
+        # Save PNG preview
         png_save_path = None
         if save_png:
+            # Local import to avoid hard dependency if visualizer is absent
+            from data.data_visualizer import _save_dataframe_png
             png_save_path = _save_dataframe_png(
-                df=full_data,
+                df=df,
                 png_path=png_path,
                 head_n=png_head_n,
                 dpi=png_dpi,
             )
 
         return {
-            'full_data': full_data,
-            'train_set': train_set,
-            'test_set': test_set,
-            'df_save_path': df_save_path,
-            'png_save_path': png_save_path,
-            'feature_filter_report': feature_filter_report,
+            "full_data": df,
+            "train_set": train_set,
+            "test_set": test_set,
+            "feature_filter_report": feature_filter_report,
+            "df_save_path": df_save_path,
+            "png_save_path": png_save_path,
         }
-
-
-class Reader:
-
-    def __init__(self, base_path: str = BASE_PATH, ltv_path: str = LTV_PATH, vix_path: str = VIX_PATH,):
-        self.base_path = base_path
-        self.ltv_path = ltv_path
-        self.vix_path = vix_path
-
-        self.base_data = None
-        self.ltv_data = None
-        self.vix_data = None
-        self.data = None  # Final merged data
-
-    def _read_from(self, file_path: str) -> pd.DataFrame:
-        """Helper to read a CSV file safely."""
-        try:
-            return pd.read_csv(file_path)
-        except Exception as e:
-            raise ValueError(f"Error reading data from {file_path}: {str(e)}")
-
-    def _merge(self, external_df: pd.DataFrame, column_prefix: str) -> None:
-        """Merge external_df into base_data on 'date', prefixing columns."""
-        logger.info(f"Merging {column_prefix} data into base_data")
-
-        # Rename columns
-        external_df = external_df.rename(columns={
-            col: f"{column_prefix}_{col.lower()}" for col in external_df.columns if col.upper() != 'DATE'
-        })
-        external_df = external_df.rename(columns={'DATE': 'date'})
-
-        # Ensure datetime format
-        external_df['date'] = pd.to_datetime(external_df['date'])
-        self.base_data['date'] = pd.to_datetime(self.base_data['date'])
-
-        # Merge
-        self.base_data = pd.merge(self.base_data, external_df, on='date', how='left')
-
-    def read_data(self) -> None:
-        """Read base, LTV, and VIX data from CSV files."""
-        logger.info("Reading CSV files")
-        self.base_data = self._read_from(self.base_path)
-        self.ltv_data = self._read_from(self.ltv_path)
-        self.vix_data = self._read_from(self.vix_path)
-
-    def merge_all(self) -> None:
-        """Merge LTV and VIX data into base_data, store result in self.data."""
-        logger.info("Merging external data into base_data")
-        self._merge(self.ltv_data, column_prefix="ltv")
-        self._merge(self.vix_data, column_prefix="vix")
-        self.data = self.base_data.copy()

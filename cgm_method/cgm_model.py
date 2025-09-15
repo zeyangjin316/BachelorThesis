@@ -91,121 +91,116 @@ class EnergyScore(Loss):
         
         return ES
 
+
 class cgm(object):
-    
-    def __init__(self, dim_out, dim_in_features, dim_in_past, dim_latent, n_samples_train, emb_size=2):
-        
+
+    def __init__(self, dim_out, dim_in_features, dim_in_past, dim_latent,
+                 n_samples_train, emb_size=2, past_len=20):
+        """
+        Parameters
+        ----------
+        dim_out : int
+            Output dimension (D).
+        dim_in_features : int
+            Number of global/static features.
+        dim_in_past : int
+            Number of features per past timestep.
+        dim_latent : int
+            Latent dimension size.
+        n_samples_train : int
+            Number of samples drawn per forward pass during training.
+        emb_size : int, optional
+            Weekday embedding size.
+        past_len : int, optional
+            Length of the past window (sequence length). Default 20.
+        """
         super(cgm, self).__init__()
-        
+
         self.shape_layer = ShapeLayer()
         self.sample_layer = SampleLayer(latent_dist='normal')
         self.emb_size = emb_size
-        
-        self.n_samples_train = n_samples_train #100
-        self.dim_out = dim_out #10
-        self.dim_latent = dim_latent #50
-        self.dim_in_features = dim_in_features #43
-        self.dim_in_past = dim_in_past #165
-        
-        #self.model, self.model_delta = self._build_model()
+
+        self.n_samples_train = n_samples_train
+        self.dim_out = dim_out
+        self.dim_latent = dim_latent
+        self.dim_in_features = dim_in_features
+        self.dim_in_past = dim_in_past
+        self.past_len = past_len  # <-- configurable window
+
         self.model = self._build_model()
 
-
-    def _build_model(self):        
-
+    def _build_model(self):
         ### Inputs ###
-        input_past = keras.Input(shape=(20, self.dim_in_past), name = "input_past")
-        input_std = keras.Input(shape=(self.dim_in_past,), name = "input_std")
-        input_all = keras.Input(shape=(self.dim_in_features,), name = "input_all")
-        input_weekday = keras.Input(shape=(1,), name = "input_weekday")
+        input_past = keras.Input(shape=(self.past_len, self.dim_in_past), name="input_past")
+        input_std = keras.Input(shape=(self.dim_in_past,), name="input_std")
+        input_all = keras.Input(shape=(self.dim_in_features,), name="input_all")
+        input_weekday = keras.Input(shape=(1,), name="input_weekday")
         bs = self.shape_layer(input_all)
-        
+
         ### Embeddings of week day information ###
         emb = layers.Embedding(8, self.emb_size)(input_weekday)
         emb = layers.Flatten()(emb)
-    
+
         ##### Time series forecast part: module 1 ####
-        tsp = layers.Dense(512, activation = 'elu')(input_past)
-        #tsp = layers.Dense(64, activation = 'elu')(tsp)
-        tsp = layers.Dense(128, activation = 'elu')(tsp) # added
-        tsp = layers.Dense(32, activation = 'elu')(tsp) # added
-        tsp = layers.Dense(1, activation = 'linear')(tsp)
-        # (, 20, 1)
-        tsp = layers.Flatten()(tsp)
-        # (, 20)
-        
+        # Dense on a 3D tensor applies per timestep (last axis). Shapes keep the same time length = past_len.
+        tsp = layers.Dense(512, activation='elu')(input_past)  # (None, past_len, 512)
+        tsp = layers.Dense(128, activation='elu')(tsp)  # (None, past_len, 128)
+        tsp = layers.Dense(32, activation='elu')(tsp)  # (None, past_len, 32)
+        tsp = layers.Dense(1, activation='linear')(tsp)  # (None, past_len, 1)
+        tsp = layers.Flatten()(tsp)  # (None, past_len)
+
         ##### Conditional noise part: module 2 ####
-        delta = layers.Dense(512, activation = 'elu')(input_std)
-        delta = layers.Dense(256, activation = 'elu')(delta)
-        delta = layers.Dense(self.dim_latent, activation = 'exponential')(delta)
-        # (, dim_latent)
-        delta_z = layers.Reshape((1, self.dim_latent))(delta)
-        # (, 1, dim_latent)
-        
+        delta = layers.Dense(512, activation='elu')(input_std)
+        delta = layers.Dense(256, activation='elu')(delta)
+        delta = layers.Dense(self.dim_latent, activation='exponential')(delta)  # (None, dim_latent)
+        delta_z = layers.Reshape((1, self.dim_latent))(delta)  # (None, 1, dim_latent)
+
         # Convert dimensions to tensors
         n_samples = tf.constant(self.n_samples_train)
         d_latent = tf.constant(self.dim_latent)
         # Use the custom sampling layer
-        epsilon = self.sample_layer([bs, n_samples, d_latent])
-        # (, n_samples, dim_latent)
-        z = layers.Multiply()([delta_z, epsilon])
-        # (, n_samples, dim_latent)
-        
+        epsilon = self.sample_layer([bs, n_samples, d_latent])  # (None, n_samples, dim_latent)
+        z = layers.Multiply()([delta_z, epsilon])  # (None, n_samples, dim_latent)
+
         ##### Weights part: module 3 ####
-        features_in = layers.Concatenate(axis=1)([input_all, emb])
-        all_predictors = layers.Concatenate(axis=1)([features_in, tsp])
-        # (, dim_in_features+20)
-        all_predictors = layers.RepeatVector(self.n_samples_train)(all_predictors) 
-        # (, n_samples, dim_in_features+20)
-        
-        W = layers.Concatenate(axis=2)([all_predictors, z])
-        # (, n_samples, dim_in_features+20+dim_latent)
-        W = layers.Dense(512, activation = 'elu')(W)
-        W = layers.Dense(256, activation = 'elu')(W)
-        W = layers.Dense(128, activation = 'elu')(W) # added
-        y_noise = layers.Dense(self.dim_out, activation = 'linear')(W) 
-        # (, n_samples, dim_out)
-        
-        y = layers.Permute((2,1))(y_noise) # (, dim_out, n_samples)
+        features_in = layers.Concatenate(axis=1)([input_all, emb])  # (None, dim_in_features + emb_size)
+        all_predictors = layers.Concatenate(axis=1)([features_in, tsp])  # (None, dim_in_features + emb_size + past_len)
+        all_predictors = layers.RepeatVector(self.n_samples_train)(all_predictors)  # (None, n_samples, ...)
+
+        W = layers.Concatenate(axis=2)([all_predictors, z])  # (None, n_samples, ... + dim_latent)
+        W = layers.Dense(512, activation='elu')(W)
+        W = layers.Dense(256, activation='elu')(W)
+        W = layers.Dense(128, activation='elu')(W)
+        y_noise = layers.Dense(self.dim_out, activation='linear')(W)  # (None, n_samples, dim_out)
+
+        y = layers.Permute((2, 1))(y_noise)  # (None, dim_out, n_samples)
 
         model = Model(inputs=[input_past, input_std, input_all, input_weekday], outputs=y)
-        #model_delta = Model(inputs=[input_past, input_all, input_std], outputs=delta)
-        
         return model
-            
-            
-    def fit(self, x, y, batch_size=64, epochs=300, verbose=0, callbacks=None, 
+
+    def fit(self, x, y, batch_size=64, epochs=300, verbose=0, callbacks=None,
             validation_split=0.0, validation_data=None, sample_weight=None, learningrate=0.01):
-        
+
         if learningrate == 'decay':
-            # Define an exponential learning rate decay schedule
             initial_learning_rate = 1e-3
             lr_schedule = ExponentialDecay(initial_learning_rate, decay_steps=3, decay_rate=0.8)
-            # Compile the model with the learning rate schedule
             opt = Adam(learning_rate=lr_schedule)
         else:
             opt = Adam(learning_rate=learningrate)
-        
+
         self.model.compile(loss=EnergyScore(), optimizer=opt)
-        self.history = self.model.fit(x=x,
-                                      y=y,
-                                      batch_size=batch_size,
-                                      epochs=epochs,
-                                      verbose=verbose,
-                                      callbacks=callbacks,
-                                      validation_split=validation_split,
-                                      validation_data=validation_data,
-                                      shuffle=True,
-                                      sample_weight=sample_weight)
+        self.history = self.model.fit(
+            x=x, y=y, batch_size=batch_size, epochs=epochs, verbose=verbose,
+            callbacks=callbacks, validation_split=validation_split,
+            validation_data=validation_data, shuffle=True, sample_weight=sample_weight
+        )
 
         return self
 
-        
     def predict(self, x_test, n_samples=1, verbose=0):
         repetitions = np.int32(np.ceil(n_samples / self.n_samples_train))
         S = np.tile(self.model.predict(x_test, verbose=verbose), (1, 1, repetitions))
         return S[:, :, 0:n_samples]
 
-    
     def get_model(self):
         return self.model
