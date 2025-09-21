@@ -17,7 +17,21 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\data\full_data.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\data_for_kit.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\debug_bad_rows\bad_X_past_fit_prepare_rows.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
@@ -52,6 +66,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\results\CGM\20250917-174737\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\results\COMPARISON\20250819-232955\metrics.csv">
           <value>
             <Attribute>
@@ -73,14 +94,21 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\results\descriptives\ret_crsp_summary_by_symbol.csv">
+        <entry key="\results\TWOSTEP\20250919-122350\metrics.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
             </Attribute>
           </value>
         </entry>
-        <entry key="\results\final_data_20250915-131456.csv">
+        <entry key="\results\TWOSTEP\20250919-132554\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\descriptives\ret_crsp_summary_by_symbol.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

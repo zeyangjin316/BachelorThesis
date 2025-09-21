@@ -34,13 +34,10 @@ class CGMExperiment:
 
         self.data_handler = DataHandler(self.data_cfg.split_point)
         self.data_dict = self.data_handler.get_data(
-            return_col="ret_crsp",
-            har_windows=(5, 21, 63),
-            hl_days=(1, 5, 21, 63),
-            exclude_pandemic=False,
-            filter_features=False,
+            exclude_pandemic=True,
+            filter_duplicates=True,
             save_df=False,
-            save_png=True,  # enable PNG
+            save_png=False,  # enable PNG
             png_path="results/full_data_preview.png",  # custom path
             png_head_n=50,  # show first 50 rows
             png_dpi=200,

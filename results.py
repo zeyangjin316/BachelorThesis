@@ -6,32 +6,36 @@ from datetime import datetime
 from typing import Any
 
 
+def _sanitize_for_path(s: str) -> str:
+    """Make a short, filesystem-safe directory name."""
+    if not s:
+        return "Unknown"
+    # Keep letters, numbers, hyphen/underscore/space -> convert spaces to underscores
+    safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in str(s))
+    return safe.strip().replace(" ", "_")[:40]  # keep it compact
+
+
 class ResultSaver:
     """
     Directory layout (example):
     results/
       CGM/                     # experiment group (by mode)
-        20250817-141233/       # timestamp at *completion*
-          params_cgm.json      # if CGM params provided
-          params_two_step.json # if Two-Step params provided
-          metrics.csv          # ONLY metrics (no params)
-          samples_cgm.npy      # if CGM samples exist
-          samples_two_step.npy # if Two-Step samples exist
-          manifest.json        # lightweight run manifest
+      TWOSTEP/
+        Gaussian/              # <-- grouped by copula type
+          20250817-141233/     # timestamp at *completion*
+            params_two_step.json
+            metrics.csv
+            samples_two_step.npy
+            manifest.json
     """
     def __init__(self, mode: str, cgm_params: dict | None, two_step_params: dict | None):
         self.mode = mode
         self.cgm_params = cgm_params
         self.two_step_params = two_step_params
+        self.copula_type = two_step_params.get("copula_type", None) if two_step_params else None
 
-        # simple, robust experiment group name based on mode
-        group = {"cgm": "CGM", "2step": "TWOSTEP", "comparison": "COMPARISON"}.get(mode, "RUN")
-
-        # create the base folder now; timestamp is added on save() at completion time
-        self.group_path = os.path.join("results", group)
-        os.makedirs(self.group_path, exist_ok=True)
-
-        # this will be set on first save() call using current completion timestamp
+        # Defer group_path creation to save(), so we can use params if passed there
+        self.group_path = None
         self.base_path = None
 
     # ---------- public API ----------
@@ -41,13 +45,27 @@ class ResultSaver:
         metrics_rows: list of dicts, one per model, containing ONLY metrics (e.g., loss, CRPS, runtime_s, etc.)
         params: {"cgm": <params dict or None>, "two_step": <params dict or None>}
         """
+        params = params or {}
+
+        # --- build group path (mode + optional copula subfolder) ---
+        group_map = {"cgm": "CGM", "2step": "TWOSTEP", "comparison": "COMPARISON"}
+        group = group_map.get(str(self.mode).lower(), "RUN")
+
+        # Try two sources for copula type: constructor arg or params at save-time
+        copula_type = None
+        if group == "TWOSTEP" and self.copula_type is not None:
+            group = os.path.join(group, _sanitize_for_path(self.copula_type))
+
+        # Create the base group folder now
+        self.group_path = os.path.join("results", group)
+        os.makedirs(self.group_path, exist_ok=True)
+
         # completion timestamp for this run
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.base_path = os.path.join(self.group_path, ts)
         os.makedirs(self.base_path, exist_ok=True)
 
         # --- save params (if provided) ---
-        params = params or {}
         if params.get("cgm") is not None:
             self._save_json("params_cgm.json", self._to_jsonable(params["cgm"]))
         if params.get("two_step") is not None:
@@ -55,7 +73,6 @@ class ResultSaver:
 
         # --- save metrics (ONLY metrics) ---
         if metrics_rows:
-            # Ensure no accidental nested configs: they should be metrics only
             cleaned = [self._strip_non_jsonable(row) for row in metrics_rows]
             df_metrics = pd.DataFrame(cleaned)
             df_metrics.to_csv(os.path.join(self.base_path, "metrics.csv"), index=False)
@@ -80,6 +97,7 @@ class ResultSaver:
                 "samples_cgm": "samples_cgm.npy" if samples_cgm is not None else None,
                 "samples_two_step": "samples_two_step.npy" if samples_two_step is not None else None,
             },
+            "copula_type": copula_type if group.startswith("TWOSTEP") else None,
         }
         self._save_json("manifest.json", manifest)
 

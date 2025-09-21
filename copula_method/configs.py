@@ -9,6 +9,7 @@ class TSDataConfig:
 class TSInitConfig:
     univariate_type: str = "ARMAGARCH"
     copula_type: str = "Gaussian"
+    copula_params: dict | Any | None = None
     # General size of the rolling window used to calculate correlation matrices.
     rolling_window_size: float = 0.6
     copula_refit_freq: int = 1

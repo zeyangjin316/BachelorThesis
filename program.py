@@ -9,6 +9,7 @@ import pandas as pd
 import time
 import argparse
 
+from datetime import datetime
 from data.data_handling import DataHandler
 from results import ResultSaver
 from run_helpers import run_experiment
@@ -55,7 +56,7 @@ def main():
             exclude_pandemic=True
         ),
         "cgm_init": CGMInitConfig(
-            dim_latent=128,
+            dim_latent=256,
             n_samples_train=100,
             emb_size=4
         ),
@@ -63,7 +64,7 @@ def main():
             n_epochs=100,
             batch_size=512,
             train_freq=30,
-            train_window_size=100,
+            train_window_size=50,
             learningrate=0.00005,  # or "decay"
             verbose=1,
             callbacks=None,
@@ -79,11 +80,12 @@ def main():
 
     ts_params = {
         "data_config": TSDataConfig(
-            split_point=0.9,
+            split_point=datetime(2019, 1, 4),
         ),
         "init_config": TSInitConfig(
             univariate_type="ARMAGARCH",
-            copula_type="Gaussian",
+            copula_type="skewed-t",
+            copula_params={"df": 5},
             rolling_window_size=1,
             copula_refit_freq=30,
             uv_fit_percentage=0.2,
@@ -114,36 +116,34 @@ def main():
 
     if choice in {"data_only"}:
         logging.info("Running Data Preparation")
-        # 1) initialize handler
-        dh = DataHandler(split_point=0.8)
+        # Use a date split for clarity
+        split_point = pd.Timestamp("2018-01-01")
 
-        # 2) run pipeline
-        result = dh.get_data(
-            return_col="ret_crsp",
-            har_windows=(5, 21, 63),
-            hl_days=(1, 5, 21, 63),
-            exclude_pandemic=False,
-            filter_features=False,
+        handler = DataHandler(split_point=split_point)
+
+        data_dict = handler.get_data(
+            exclude_pandemic=True,
+            target_only=False,
+            filter_duplicates=True,
             save_df=True,
-            save_png=True,  # enable PNG
-            png_path="results/full_data_preview.png",  # custom path
-            png_head_n=50,  # show first 50 rows
-            png_dpi=200,
+            df_path="data/full_data.csv",
+            save_png=False,
         )
 
-        full_df = result["full_data"]
-        train_df = result["train_set"]
-        test_df = result["test_set"]
-        png_path = result["png_save_path"]
+        df = data_dict["full_data"]
 
-        print("Full dataset:", full_df.shape)
-        print("Train set:", train_df.shape)
-        print("Test set:", test_df.shape)
+        print("\n=== Dataset Shape ===")
+        print(df.shape)
 
-        print("\nColumns in final dataset:")
-        print(full_df.columns.tolist())
+        print("\n=== Columns ===")
+        print(df.columns.tolist())
 
-        print("\nPNG preview saved at:", png_path)
+        print("\n=== Head ===")
+        print(df.head())
+
+        print("\n=== Train/Test sizes ===")
+        print(len(data_dict["train_set"]), len(data_dict["test_set"]))
+
 
     if choice in {"cgm", "comparison"}:
         logging.info("Running CGM Experiment")

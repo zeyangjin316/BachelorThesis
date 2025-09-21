@@ -4,216 +4,180 @@ from typing import Iterable, List, Optional, Dict
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 from data.data_handling import DataHandler
 
 
 class ForecastPlotter:
     """
-    Utility for plotting multivariate forecast samples from two models (e.g., CGM vs Two-Step)
-    against realized returns over the test period used by the experiments.
+    Plot forecast samples vs realized returns for multiple assets.
 
-    Typical usage:
-        plotter = ForecastPlotter(DataHandler(split_point=0.9))
-        outputs = plotter.plot_multivariate_forecasts(
-            path_cgm="results/CGM/20250826-101253/samples_cgm.npy",
-            path_ts="results/COMPARISON/20250819-232955/samples_two_step.npy",
-            symbols_order=["MSFT","XOM","GE","AAPL","CAT","BA","PFE","JNJ","MRK","JPM"],
-            symbols_to_plot=None,   # None => plot all in symbols_order
-            sample_to_plot=0,
-            save_dir="results/plots",
-            show=True,
-            save_png=True,
-            save_pdf=False,
-        )
+    Notes
+    -----
+    - Aligns forecast dates using the **last n_origins** test dates
+      to match typical forecasting workflows.
+    - Handles missing realized values by leaving gaps only for the
+      affected asset (does not drop whole days).
     """
 
     def __init__(self, data_handler: DataHandler):
         self.data_handler = data_handler
 
     def _make_symbol_colors(self, symbols):
-        """Return a {symbol: RGBA} mapping with distinct, stable colors."""
         import matplotlib.cm as cm
         import matplotlib.colors as mcolors
-
-        # Prefer a qualitative map that works up to ~20 categories
         if len(symbols) <= 10:
             cmap = cm.get_cmap("tab10", len(symbols))
         elif len(symbols) <= 20:
             cmap = cm.get_cmap("tab20", len(symbols))
         else:
-            # Fallback for many symbols: evenly spaced on HSV
             cmap = cm.get_cmap("hsv", len(symbols))
-
         return {s: mcolors.to_rgba(cmap(i)) for i, s in enumerate(symbols)}
 
     def plot_multivariate_forecasts(
             self,
             *,
-            path_cgm: str,
-            path_ts: str,
+            model_paths: Dict[str, str],  # {"CGM": ".../samples_cgm.npy", "Two-Step": ".../samples_ts.npy", ...}
             symbols_order: List[str],
             symbols_to_plot: Optional[Iterable[str]] = None,
             sample_to_plot: int = 0,
             save_dir: str = "results/plots",
-            standardize: bool = False,
-            filter_features: bool = True,
             exclude_pandemic: bool = True,
             show: bool = True,
             save_png: bool = True,
             save_pdf: bool = False,
             add_legend: bool = True,
-            colors: Optional[Dict[str, str]] = None,  # NEW: choose line colors
+            model_colors: Optional[Dict[str, tuple]] = None,  # per-model color override
+            realized_color: Optional[str] = None,  # realized line color override
     ) -> Dict[str, str]:
         """
-        Plot time series per selected symbol comparing a single forecast *sample* from
-        two models (CGM and Two-Step) to realized returns.
+        Plot one selected sample index across an arbitrary number of models.
 
-        Parameters
-        ----------
-        path_cgm : str
-            Path to CGM samples .npy of shape (n_origins, n_symbols, n_samples).
-        path_ts : str
-            Path to Two-Step samples .npy with the same shape semantics.
-        symbols_order : list of str
-            The order of symbols along axis=1 of both .npy files.
-        symbols_to_plot : iterable of str, optional
-            Subset of symbols to plot. Defaults to all in symbols_order.
-        sample_to_plot : int
-            Which sample index (0-based) to visualize.
-        save_dir : str
-            Directory to write plots.
-        standardize, filter_features, exclude_pandemic : bool
-            Passed to DataHandler.get_data to reproduce experiment config.
-        show : bool
-            If True, display figures with plt.show().
-        save_png : bool
-            If True, save a PNG per symbol.
-        save_pdf : bool
-            If True, also save a PDF per symbol.
-        add_legend : bool
-            If True, include a legend on each plot.
-        colors : dict, optional
-            Mapping to set line colors for each series. Keys:
-              - "cgm": color for the CGM forecast line
-              - "two_step": color for the Two-Step forecast line
-              - "realized": color for the realized series line
-            Example:
-              {"cgm": "tab:blue", "two_step": "tab:orange", "realized": "black"}
-            If omitted or a key is missing, matplotlib defaults will be used for that line.
-
-        Returns
-        -------
-        dict
-            Mapping symbol -> saved PNG path (if save_png) or last saved path.
+        Each model's .npy must be shaped (T, S, N) with S == len(symbols_order).
+        We align all models by the **minimum T** across them (from the end).
         """
-        import os
-        from typing import Dict, Iterable, List, Optional
-        import numpy as np
-        import pandas as pd
-        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
+
+        if not model_paths:
+            raise ValueError("model_paths cannot be empty (need at least one model name → .npy path).")
 
         os.makedirs(save_dir, exist_ok=True)
 
-        # ---- Load samples ----
-        samples_cgm = np.load(path_cgm)  # (n_origins, n_symbols, n_samples)
-        samples_ts = np.load(path_ts)  # same shape semantics
+        # ---- Load all forecast samples & validate ----
+        loaded = {}  # model -> np.ndarray (T,S,N)
+        Ts, Ss, Ns = {}, {}, {}
+        for model, path in model_paths.items():
+            arr = np.load(path)
+            if arr.ndim != 3:
+                raise ValueError(f"{model}: expected 3D array (T,S,N). Got {arr.shape}.")
+            if not np.isfinite(arr).all():
+                raise ValueError(f"{model}: samples contain non-finite values.")
+            T, S, N = arr.shape
+            if S != len(symbols_order):
+                raise ValueError(f"{model}: axis=1 size {S} must equal len(symbols_order)={len(symbols_order)}.")
+            loaded[model] = arr
+            Ts[model], Ss[model], Ns[model] = T, S, N
 
-        if samples_cgm.ndim != 3 or samples_ts.ndim != 3:
-            raise ValueError("Expected 3D arrays for both samples files")
-
-        n_origins_cgm, n_symbols_cgm, n_samples_cgm = samples_cgm.shape
-        n_origins_ts, n_symbols_ts, n_samples_ts = samples_ts.shape
-
-        if n_symbols_cgm != len(symbols_order):
-            raise ValueError("symbols_order length must equal axis=1 size of CGM array")
-        if n_symbols_ts != len(symbols_order):
-            raise ValueError("symbols_order length must equal axis=1 size of Two-Step array")
-
-        # We allow different n_origins as long as they start the same day; we'll align by the min length.
-        n_origins = min(n_origins_cgm, n_origins_ts)
-        if n_origins == 0:
-            raise ValueError("No forecast origins found in the provided samples.")
-
-        if sample_to_plot < 0 or sample_to_plot >= min(n_samples_cgm, n_samples_ts):
+        # Ensure requested sample index exists for all models
+        min_N = min(Ns.values())
+        if sample_to_plot < 0 or sample_to_plot >= min_N:
             raise IndexError(
-                f"sample_to_plot={sample_to_plot} out of bounds. "
-                f"CGM has {n_samples_cgm} samples, Two-Step has {n_samples_ts}."
+                f"sample_to_plot={sample_to_plot} is out of bounds for at least one model "
+                f"(minimum available samples across models: {min_N})."
             )
 
-        # Slice to aligned origins and select a common sample
-        sample_cgm = samples_cgm[:n_origins, :, sample_to_plot]  # (n_origins, n_symbols)
-        sample_ts = samples_ts[:n_origins, :, sample_to_plot]
+        # Align by minimum number of forecast origins across all models
+        T_align = min(Ts.values())
+        for m in loaded:
+            loaded[m] = loaded[m][-T_align:, :, :]  # end alignment
 
-        # ---- Load data using DataHandler (same configuration as experiments) ----
+        # Slice the chosen sample (T, S) for each model → DataFrames with aligned index later
+        model_frames: Dict[str, pd.DataFrame] = {}
+        for m, arr in loaded.items():
+            sample = arr[:, :, sample_to_plot]  # (T, S)
+            model_frames[m] = pd.DataFrame(sample, columns=symbols_order)
+
+        # ---- Load realized data similarly to your config ----
         data_dict = self.data_handler.get_data(
-            standardize=standardize,
-            filter_features=filter_features,
             exclude_pandemic=exclude_pandemic,
+            target_only=True
         )
-
         test_set = data_dict["test_set"]
         test_set = test_set[test_set["sym_root"].isin(symbols_order)]
 
-        # Get the first n_origins test dates (assumes both models start at same date)
-        test_dates_all = sorted(test_set["date"].unique())
-        if len(test_dates_all) < n_origins:
-            raise ValueError(
-                f"Not enough test dates ({len(test_dates_all)}) to match n_origins ({n_origins})."
-            )
-        test_dates = test_dates_all[:n_origins]
+        # Get last T_align test dates to match samples
+        all_test_dates = np.array(sorted(test_set["date"].unique()))
+        if len(all_test_dates) < T_align:
+            raise ValueError(f"Not enough test dates ({len(all_test_dates)}) to match samples ({T_align}).")
+        test_dates = all_test_dates[-T_align:]
 
-        # ---- Create sample DataFrames with the correct dates ----
-        df_sample_cgm = pd.DataFrame(sample_cgm, index=test_dates, columns=symbols_order)
-        df_sample_ts = pd.DataFrame(sample_ts, index=test_dates, columns=symbols_order)
+        # Attach index to model dataframes
+        for m in model_frames:
+            model_frames[m].index = test_dates
 
-        # ---- Get realized returns for the sample dates ----
-        real_data = test_set[test_set["date"].isin(test_dates)]
+        # Realized wide table
         df_real = (
-            real_data.pivot(index="date", columns="sym_root", values="ret_crsp")
-            .reindex(test_dates)
-            .reindex(columns=symbols_order)
+            test_set.pivot(index="date", columns="sym_root", values="ret_crsp")
+            .reindex(test_dates)  # keep alignment
+            .reindex(columns=symbols_order)  # ensure column order
         )
 
-        # Determine which symbols to draw
+        # Determine subset to plot
         symbols = list(symbols_order) if symbols_to_plot is None else list(symbols_to_plot)
-        missing = [s for s in symbols if s not in symbols_order]
-        if missing:
-            raise ValueError(f"symbols_to_plot contains unknown symbols: {missing}")
+        unknown = [s for s in symbols if s not in symbols_order]
+        if unknown:
+            raise ValueError(f"symbols_to_plot contains unknown symbols: {unknown}")
 
-        # Colors handling (optional; fall back to mpl defaults if not provided)
-        colors = colors or {}
-        color_cgm = colors.get("cgm")
-        color_ts = colors.get("two_step")
-        color_real = colors.get("realized")
+        # Colors for models (auto if not provided)
+        models_in_order = list(model_paths.keys())
+        if model_colors is None:
+            n = len(models_in_order)
+            if n <= 10:
+                cmap = cm.get_cmap("tab10", n)
+            elif n <= 20:
+                cmap = cm.get_cmap("tab20", n)
+            else:
+                cmap = cm.get_cmap("hsv", n)
+            model_colors = {m: mcolors.to_rgba(cmap(i)) for i, m in enumerate(models_in_order)}
 
-        saved_paths: Dict[str, str] = {}
+        # Realized line color (default: black)
+        realized_color = realized_color or "black"
 
-        # ---- Plot: time series per selected symbol ----
+        saved: Dict[str, str] = {}
+
         for sym in symbols:
             plt.figure(figsize=(10, 6))
 
+            # Plot each model's selected sample for this symbol
+            for m in models_in_order:
+                df_m = model_frames[m]
+                plt.plot(
+                    df_m.index,
+                    df_m[sym],
+                    linewidth=2,
+                    label=f"{m} sample {sample_to_plot}",  # <-- labeled colored lines
+                    color=model_colors.get(m)
+                )
+
+            # Plot realized (gaps where NaN)
             plt.plot(
-                df_sample_cgm.index, df_sample_cgm[sym],
-                linewidth=2, label=f"CGM sample {sample_to_plot}",
-                color=color_cgm,
-            )
-            plt.plot(
-                df_sample_ts.index, df_sample_ts[sym],
-                linewidth=2, label=f"Two-Step sample {sample_to_plot}",
-                color=color_ts,
-            )
-            plt.plot(
-                df_real.index, df_real[sym],
-                linewidth=2, label="Realized",
-                color=color_real,
+                df_real.index,
+                df_real[sym],
+                linewidth=2,
+                label="Realized",
+                color=realized_color,
+                alpha=0.9
             )
 
-            # dynamic y-axis range with margin
-            all_vals = pd.concat([df_sample_cgm[sym], df_sample_ts[sym], df_real[sym]])
-            y_min, y_max = all_vals.min(), all_vals.max()
-            y_range = (y_max - y_min) if pd.notna(y_max) and pd.notna(y_min) else 1.0
-            plt.ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+            # Y padding
+            all_vals = [model_frames[m][sym] for m in models_in_order] + [df_real[sym]]
+            all_vals = pd.concat(all_vals)
+            y_min, y_max = all_vals.min(skipna=True), all_vals.max(skipna=True)
+            if pd.notna(y_min) and pd.notna(y_max):
+                pad = 0.1 * (y_max - y_min if y_max > y_min else 1.0)
+                plt.ylim(y_min - pad, y_max + pad)
 
             plt.title(f"{sym} — Forecast vs Realized")
             plt.xlabel("Date")
@@ -223,16 +187,16 @@ class ForecastPlotter:
             plt.grid(alpha=0.3)
             plt.tight_layout()
 
-            basepath = os.path.join(save_dir, f"{sym}_sample{sample_to_plot}")
+            base = os.path.join(save_dir, f"{sym}_sample{sample_to_plot}")
             last_path = ""
             if save_png:
-                png_path = basepath + ".png"
-                plt.savefig(png_path, dpi=300)
-                last_path = png_path
+                png = base + ".png"
+                plt.savefig(png, dpi=300)
+                last_path = png
             if save_pdf:
-                pdf_path = basepath + ".pdf"
-                plt.savefig(pdf_path)
-                last_path = pdf_path or last_path
+                pdf = base + ".pdf"
+                plt.savefig(pdf)
+                last_path = pdf or last_path
 
             if show:
                 plt.show()
@@ -240,9 +204,9 @@ class ForecastPlotter:
                 plt.close()
 
             if last_path:
-                saved_paths[sym] = last_path
+                saved[sym] = last_path
 
-        return saved_paths
+        return saved
 
     def describe_target_ret_crsp(
             self,
@@ -253,7 +217,6 @@ class ForecastPlotter:
             rolling_window: int = 30,
             save_dir: str = "figures",  # main figures folder
             csv_dir: str = "results/descriptives",  # CSV folder
-            standardize: bool = False,
             filter_features: bool = True,
             exclude_pandemic: bool = False,
             show: bool = True,
@@ -279,8 +242,7 @@ class ForecastPlotter:
 
         # ---- Load dataset using DataHandler ----
         data_dict = self.data_handler.get_data(
-            standardize=standardize,
-            filter_features=filter_features,
+            filter_duplicates=filter_features,
             exclude_pandemic=exclude_pandemic,
         )
         if "full_set" in data_dict:
@@ -670,32 +632,219 @@ class ForecastPlotter:
 
         return outputs
 
+    def plot_forecasts_grouped_by_industry(
+            self,
+            *,
+            model_files: Dict[str, str],  # {"CGM": ".../samples.npy", "Gaussian Copula": "...", ...}
+            symbols_order: List[str],
+            symbol_to_industry: Dict[str, str],  # {"AAPL": "Technology -- Consumer Electronics", ...}
+            sample_to_plot: int = 0,
+            industries_order: Optional[List[str]] = None,
+            save_path: str = "results/plots/forecasts_by_industry.png",
+            exclude_pandemic: bool = True,
+            show: bool = True,
+            add_legend: bool = True,
+            inline_labels: bool = True,
+            model_colors: Optional[Dict[str, tuple]] = None,  # RGBA tuples per model
+    ):
+        """
+        One figure with subplots grouped by industry.
+        - Color encodes the model (consistent across subplots).
+        - Line style encodes the symbol (consistent within a subplot).
+        - Inline labels mark each symbol on the realized line.
+        """
+        import itertools
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+
+        # ---- load and align model arrays (T, S, N) ----
+        arrays = {}
+        T_list, S_list, N_list = [], [], []
+        for label, path in model_files.items():
+            arr = np.load(path)
+            if arr.ndim != 3:
+                raise ValueError(f"{label}: expected (T,S,N), got {arr.shape}")
+            if arr.shape[1] != len(symbols_order):
+                raise ValueError(f"{label}: symbols_order length {len(symbols_order)} != S {arr.shape[1]}")
+            arrays[label] = arr
+            T_list.append(arr.shape[0]);
+            S_list.append(arr.shape[1]);
+            N_list.append(arr.shape[2])
+
+        min_N = min(N_list)
+        if not (0 <= sample_to_plot < min_N):
+            raise IndexError(f"sample_to_plot={sample_to_plot} out of bounds (min N across models = {min_N})")
+
+        min_T = min(T_list)
+        arrays = {k: v[-min_T:, :, :] for k, v in arrays.items()}  # align from end
+
+        # ---- realized data aligned to the same dates ----
+        data_dict = self.data_handler.get_data(exclude_pandemic=exclude_pandemic, target_only=True)
+        test_set = data_dict["test_set"]
+        test_set = test_set[test_set["sym_root"].isin(symbols_order)]
+        all_test_dates = np.array(sorted(test_set["date"].unique()))
+        if len(all_test_dates) < min_T:
+            raise ValueError(f"Not enough test dates ({len(all_test_dates)}) for T={min_T}")
+        test_dates = all_test_dates[-min_T:]
+
+        # build per-model DataFrame for selected sample
+        df_models = {
+            label: pd.DataFrame(arr[:, :, sample_to_plot], index=test_dates, columns=symbols_order)
+            for label, arr in arrays.items()
+        }
+        df_real = (
+            test_set.pivot(index="date", columns="sym_root", values="ret_crsp")
+            .reindex(test_dates)
+            .reindex(columns=symbols_order)
+        )
+
+        # ---- industries & symbols per industry ----
+        # keep only symbols in symbols_order, preserve symbols_order order in each industry
+        industries = {}
+        for sym in symbols_order:
+            ind = symbol_to_industry.get(sym, "Other")
+            industries.setdefault(ind, []).append(sym)
+
+        if industries_order is None:
+            industries_order = list(industries.keys())
+        else:
+            # ensure only industries that exist and preserve custom order
+            industries_order = [i for i in industries_order if i in industries]
+
+        n_ind = len(industries_order)
+        if n_ind == 0:
+            raise ValueError("No industries to plot.")
+
+        # ---- colors for models (RGBA tuples expected) ----
+        if model_colors is None:
+            # fallback to matplotlib default cycle converted to RGBA
+            default_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+            cyc = itertools.cycle(default_colors if default_colors else ["C0", "C1", "C2", "C3", "C4", "C5"])
+            model_colors = {}
+            for m in model_files.keys():
+                model_colors[m] = mcolors.to_rgba(next(cyc))
+
+        # ---- line styles for symbols (cycled per subplot) ----
+        style_cycle_master = ['-', '--', ':', '-.']
+
+        # ---- figure layout (roughly square) ----
+        ncols = int(np.ceil(np.sqrt(n_ind)))
+        nrows = int(np.ceil(n_ind / ncols))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 3.8 * nrows), sharex=False, sharey=False)
+        axes = np.array(axes).reshape(-1)  # flatten for easy indexing
+
+        # ---- plot per industry ----
+        for ax_idx, industry in enumerate(industries_order):
+            ax = axes[ax_idx]
+            syms = industries[industry]
+            if not syms:
+                ax.set_visible(False)
+                continue
+
+            # style cycle for symbols within this industry
+            style_cycle = itertools.cycle(style_cycle_master)
+
+            # track y range for padding
+            all_vals = []
+
+            # plot each model across all symbols
+            for model_name, dfm in df_models.items():
+                color = model_colors[model_name]
+                # to make legend compact, we add one handle per model (using first symbol)
+                first_symbol = True
+                # for symbol-specific styles, we need stable mapping
+                sym_to_style = {s: st for s, st in
+                                zip(syms, itertools.islice(itertools.cycle(style_cycle_master), len(syms)))}
+
+                for s in syms:
+                    ls = sym_to_style[s]
+                    series = dfm[s]
+                    ax.plot(series.index, series.values,
+                            linewidth=1.6, color=color, linestyle=ls,
+                            label=(f"{model_name}" if first_symbol else None))
+                    first_symbol = False
+                    all_vals.append(series)
+
+            # realized lines per symbol (black, styled by symbol)
+            sym_to_style = {s: st for s, st in
+                            zip(syms, itertools.islice(itertools.cycle(style_cycle_master), len(syms)))}
+            for s in syms:
+                rs = df_real[s]
+                ax.plot(rs.index, rs.values, color="black", linestyle=sym_to_style[s], linewidth=1.8,
+                        label=None)
+                if inline_labels:
+                    last = rs.dropna()
+                    if not last.empty:
+                        ax.text(last.index[-1], last.iloc[-1], s, ha="left", va="center", fontsize=9, color="black")
+
+                all_vals.append(rs)
+
+            # y padding
+            all_vals_cat = pd.concat(all_vals)
+            y_min = all_vals_cat.min(skipna=True)
+            y_max = all_vals_cat.max(skipna=True)
+            if np.isfinite(y_min) and np.isfinite(y_max):
+                pad = 0.1 * (y_max - y_min if y_max > y_min else 1.0)
+                ax.set_ylim(y_min - pad, y_max + pad)
+
+            ax.set_title(industry, fontsize=11)
+            ax.grid(alpha=0.3)
+            ax.set_xlabel("Date")
+            ax.set_ylabel("ret_crsp")
+
+            # compact legend: models only (colors), symbols shown by inline labels + linestyle
+            if add_legend:
+                # create one legend per subplot listing models by color
+                handles, labels = ax.get_legend_handles_labels()
+                if handles:
+                    ax.legend(handles, labels, loc="upper left", frameon=True, framealpha=0.9, fontsize=9)
+
+        # hide any extra axes
+        for k in range(n_ind, len(axes)):
+            axes[k].set_visible(False)
+
+        fig.tight_layout()
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return {"figure": save_path}
+
 
 if __name__ == "__main__":
     os.makedirs("results/plots", exist_ok=True)
 
-    PATH_CGM = "results/CGM/20250914-163847/samples_cgm.npy"
-    PATH_TS  = "results/TWOSTEP/20250914-162654/samples_two_step.npy"
+    model_paths = {
+        "CGM":              "results/CGM/20250919-142103/samples_cgm.npy",
+        "Gaussian Copula":  "results/TWOSTEP/20250919-133921/samples_two_step.npy",
+        "Student-t Copula": "results/TWOSTEP/20250919-135018/samples_two_step.npy",
+        "Skewed-t Copula":  "results/TWOSTEP/20250919-135921/samples_two_step.npy",
+    }
 
-    symbols_order = [
-        "MSFT", "XOM", "GE", "AAPL", "CAT", "BA", "PFE", "JNJ", "MRK", "JPM"
-    ]
+    symbols_order = ["MSFT","XOM","GE","AAPL","CAT","BA","PFE","JNJ","MRK","JPM"]
 
     plotter = ForecastPlotter(DataHandler(split_point=0.9))
     plotter.plot_multivariate_forecasts(
-        path_cgm=PATH_CGM,
-        path_ts=PATH_TS,
+        model_paths=model_paths,
         symbols_order=symbols_order,
         symbols_to_plot=symbols_order,
         sample_to_plot=0,
         save_dir="results/plots",
-        standardize=False,
-        filter_features=True,
         exclude_pandemic=True,
         show=False,
         save_png=True,
         save_pdf=False,
-        add_legend=False,
+        add_legend=True,  # ensures colored lines are labeled in legend
+
+        model_colors={
+            "CGM": mcolors.to_rgba("#66c2a5"),  # teal-green
+            "Gaussian Copula": mcolors.to_rgba("#fc8d62"),  # orange
+            "Student-t Copula": mcolors.to_rgba("#8da0cb"),  # periwinkle blue
+            "Skewed-t Copula": mcolors.to_rgba("#e78ac3"),  # pink-magenta
+        }
     )
     outputs = plotter.describe_target_ret_crsp(
         #symbols_subset=["MSFT", "AAPL", "JPM"],  # limit to a few symbols (optional)

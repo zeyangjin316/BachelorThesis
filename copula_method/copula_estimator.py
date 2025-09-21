@@ -1,10 +1,10 @@
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
 from .uv_sampler import UnivariateSampler
-from .copula_models import CopulaModel
+from .copula_models import CopulaFactory, CopulaBase, GaussianCopula
 from copula_method import TSInitConfig, TSFitConfig, TSSampleConfig
 
 from contextlib import contextmanager
@@ -35,7 +35,7 @@ class CopulaEstimator:
     For each test day t:
       - Take k days of history ending at t-1
       - Split into W1 = first l days (fit UV), W2 = last k-l days (UV samples)
-      - Use W2 samples to build the correlation matrix for day t via CopulaModel
+      - Fit the selected copula on W2 and store the copula object for day t
     """
 
     def __init__(self,
@@ -92,8 +92,8 @@ class CopulaEstimator:
         w2 = window[self.l_days :]
         return w1, w2
 
-    def _corr_for_day(self, t: pd.Timestamp) -> tuple[pd.Timestamp, np.ndarray] | None:
-        """Compute R_t for a single target day t. Returns (t, R_t) or None on failure."""
+    def _copula_for_day(self, t: pd.Timestamp) -> tuple[pd.Timestamp, CopulaBase] | None:
+        """Fit a copula object for a single target day t. Returns (t, copula) or None on failure."""
         try:
             w1_dates, w2_dates = self._window_dates_for(t)
         except ValueError as e:
@@ -120,16 +120,17 @@ class CopulaEstimator:
             fixed_window=True,
         )
 
-        # Calibrate R_t
-        copula = CopulaModel(copula_type=self.init_config.copula_type)
-        R_t = copula.calc_matrix_for_day(
+        # Copula selection & fit
+        copula_params = getattr(self.init_config, "copula_params", {}) or {}
+        copula = CopulaFactory.create(self.init_config.copula_type, n_dim=len(self.symbols), copula_params=copula_params)
+        copula.fit_from_uv_samples(
             full_data=self.full_data,
             uv_samples=uv_samples,
             symbols=self.symbols,
             day=t,
             target_col="ret_crsp",
         )
-        return (t, R_t)
+        return (t, copula)
 
     def _marginals_for_day(self, t: pd.Timestamp, n: int) -> tuple[pd.Timestamp, dict[str, np.ndarray]] | None:
         """Compute day-t marginals for all symbols. Returns (t, {sym->samples}) or None on failure."""
@@ -155,25 +156,25 @@ class CopulaEstimator:
 
     # ---------------- public API ----------------
 
-    def build_daily_correlations(self, n_jobs: int = 1) -> Dict[pd.Timestamp, np.ndarray]:
+    def build_daily_copulas(self, n_jobs: int = 1) -> Dict[pd.Timestamp, CopulaBase]:
         """
-        Build R_t for every test day. Set n_jobs=-1 to use all cores.
+        Fit a copula object for every test day. Set n_jobs=-1 to use all cores.
         """
         targets = [pd.Timestamp(t) for t in self.test_dates]
         if n_jobs == 1:
-            out: Dict[pd.Timestamp, np.ndarray] = {}
-            for t in tqdm(targets, desc="Calibrating R_t", leave=False):
-                res = self._corr_for_day(t)
+            out: Dict[pd.Timestamp, CopulaBase] = {}
+            for t in tqdm(targets, desc="Fitting copulas", leave=False):
+                res = self._copula_for_day(t)
                 if res is not None:
-                    tt, R_t = res
-                    out[tt] = R_t
+                    tt, C = res
+                    out[tt] = C
             return out
 
-        with tqdm_joblib(tqdm(total=len(targets), desc="Calibrating R_t", leave=False)):
+        with tqdm_joblib(tqdm(total=len(targets), desc="Fitting copulas", leave=False)):
             results = Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(self._corr_for_day)(t) for t in targets
+                delayed(self._copula_for_day)(t) for t in targets
             )
-        return {tt: R for (tt, R) in results if R is not None}
+        return {tt: C for (tt, C) in results if C is not None}
 
     def build_day_marginals(self, n_samples: int, n_jobs: int = 1) -> Dict[pd.Timestamp, Dict[str, np.ndarray]]:
         """
