@@ -73,6 +73,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="\results\CGM\20250919-142103\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\results\COMPARISON\20250819-232955\metrics.csv">
           <value>
             <Attribute>
@@ -102,6 +109,20 @@
           </value>
         </entry>
         <entry key="\results\TWOSTEP\20250919-132554\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\TWOSTEP\20250919-133921\metrics.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\results\TWOSTEP\20250919-135018\metrics.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
