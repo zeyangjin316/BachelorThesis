@@ -6,7 +6,7 @@ from matplotlib.lines import Line2D
 
 from data.data_handling import DataHandler
 from forecast_plotter import ForecastPlotter
-from descriptives import describe_target_ret_crsp
+from descriptives import describe_target_ret_crsp, plot_returns_and_vol_by_sector
 
 def save_models_legend_image(
     *,
@@ -108,8 +108,8 @@ if __name__ == "__main__":
 
     plotter = ForecastPlotter(DataHandler(split_point=0.9))
 
-    # 1) per-symbol plots
-    plotter.plot_models_per_symbol(
+    # 1) Forecast per-symbol plots
+    """plotter.plot_models_per_symbol(
         model_paths=model_paths,
         symbols_order=symbols_order,
         symbols_to_plot=symbols_order,
@@ -121,9 +121,9 @@ if __name__ == "__main__":
         save_pdf=False,
         add_legend=True,
         model_colors=model_colors,
-    )
+    )"""
 
-    # 2) grouped-by-industry
+    # 2) Forecasts grouped-by-industry
     plotter.plot_grouped_by_sector(
         model_paths=model_paths,
         symbols_order=symbols_order,
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     )
 
     # 3) descriptives
-    describe_target_ret_crsp(
+    """describe_target_ret_crsp(
         DataHandler(split_point=0.9),
         start_date="2010-01-01",
         end_date="2023-12-31",
@@ -150,4 +150,15 @@ if __name__ == "__main__":
         show=False,
         save_png=True,
         add_legend=True,
-    )
+    )"""
+
+    # 4) realized returns and vol grouped by sector
+    """plot_returns_and_vol_by_sector(
+        data_handler=DataHandler(split_point=0.9),
+        symbol_to_industry=symbol_to_sector,
+        symbols_order=symbols_order,
+        rolling_window=30,
+        save_dir=os.path.join(desc_dir, "sector"),
+        show=False,
+        save_png=True,
+    )"""

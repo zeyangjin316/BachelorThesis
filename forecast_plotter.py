@@ -178,11 +178,14 @@ class ForecastPlotter:
             model_colors: Optional[Dict[str, tuple]] = None,
             sector_order: Optional[List[str]] = None,
             sector_groups: Optional[Dict[str, List[str]]] = None,
-            # e.g. {"Financials & Energy": ["Financials","Energy"]}
-            # layout:
+            # layout (fixed across ALL figures):
             a4_width: float = 11.69,
-            per_row_height: float = 4.2,
-            legend_height: float = 0.75,
+            figsize: Tuple[float, float] = (16, 9),  # <-- fixed figure size for every sector
+            ncols: int = 2,  # <-- fixed columns in the grid for every sector
+            legend_height: float = 0.70,
+            wspace: float = 0.20,
+            hspace: float = 0.22,
+            inner_margins: Tuple[float, float, float, float] = (0.06, 0.995, 0.93, 0.12),  # left,right,top,bottom
             use_compact_date_ticks: bool = True,
     ) -> Dict[str, str]:
         import math, os
@@ -193,22 +196,26 @@ class ForecastPlotter:
 
         os.makedirs(save_dir, exist_ok=True)
 
+        # --- load forecast samples aligned + realized ---
         frames, T_align, _ = _load_and_align_models(model_paths, symbols_order, sample_to_plot)
         df_real, test_dates = _get_realized_wide(self.data_handler, symbols_order, T_align, exclude_pandemic)
         for m in frames:
             frames[m].index = test_dates
 
-        # sector -> symbols mapping
+        model_list = list(model_paths.keys())
+        colors = _auto_model_colors(model_list, provided=model_colors)
+
+        # --- sector -> symbols mapping ---
         sector_to_syms: Dict[str, List[str]] = {}
         for s in symbols_order:
             sec = symbol_to_sector.get(s, "Other")
             sector_to_syms.setdefault(sec, []).append(s)
 
+        # Build groups (merged first, then remaining single sectors respecting sector_order)
         groups: Dict[str, List[str]] = {}
         group_sectors: Dict[str, List[str]] = {}
         used = set()
 
-        # build merged groups first
         if sector_groups:
             for gname, secs in sector_groups.items():
                 seq_syms, clean_secs = [], []
@@ -221,103 +228,112 @@ class ForecastPlotter:
                     groups[gname] = seq_syms
                     group_sectors[gname] = clean_secs
 
-        # then standalone
-        remaining = [s for s in (sector_order or list(sector_to_syms.keys())) if s in sector_to_syms and s not in used]
+        remaining = [s for s in (sector_order or list(sector_to_syms.keys()))
+                     if s in sector_to_syms and s not in used]
         for sec in remaining:
             groups[sec] = sector_to_syms[sec]
             group_sectors[sec] = [sec]
 
-        model_list = list(model_paths.keys())
-        colors = _auto_model_colors(model_list, provided=model_colors)
+        # -------------------------------
+        # GLOBAL, ABSOLUTE Y-LIMIT (ALL FIGS, ALL SUBPLOTS)
+        # -------------------------------
+        # collect min/max across every symbol and every model + realized
+        global_min, global_max = np.inf, -np.inf
+        for sym in symbols_order:
+            vals = [frames[m][sym] for m in model_list if sym in frames[m].columns]
+            if sym in df_real.columns:
+                vals.append(df_real[sym])
+            if not vals:
+                continue
+            s_all = pd.concat(vals)
+            vmin, vmax = s_all.min(skipna=True), s_all.max(skipna=True)
+            if np.isfinite(vmin): global_min = min(global_min, vmin)
+            if np.isfinite(vmax): global_max = max(global_max, vmax)
+
+        # absolute/symmetric scale
+        if not np.isfinite(global_min) or not np.isfinite(global_max):
+            abs_max = 1.0
+        else:
+            abs_max = float(max(abs(global_min), abs(global_max)))
+            if abs_max == 0:
+                abs_max = 1.0
+
+        ylimits = (-abs_max, abs_max)
+
+        # -------------------------------
+        # FIXED LAYOUT ACROSS ALL FIGURES
+        # -------------------------------
+        # Use a single grid shape for every sector figure:
+        # rows = ceil(nmax_symbols_per_group / ncols)
+        nmax = max(len(syms) for syms in groups.values())
+        nrows = max(1, math.ceil(nmax / ncols))
 
         saved = {}
-        for gname, syms in groups.items():
-            if not syms:
-                continue
 
-            n = len(syms)
-            ncols = 1 if n == 1 else 2
-            nrows = math.ceil(n / ncols)
-            fig_height = nrows * per_row_height + (legend_height if add_legend else 0.4)
+        # Sort groups by size desc then name (puts 3-stock sectors before 2-stock, etc.)
+        sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
 
-            fig, axes = plt.subplots(nrows, ncols, figsize=(a4_width, fig_height), squeeze=False)
+        for gname, syms in sorted_groups:
+            # fixed-size figure + fixed-size grid
+            fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
             ax_flat = axes.ravel()
 
-            is_merged_group = gname in (sector_groups or {})
-
+            # spacing/margins identical for all figures
+            left, right, top, bottom = inner_margins
             fig.subplots_adjust(
-                left=0.06, right=0.995,
-                top=(0.90 if not is_merged_group else 0.93),  # more space if suptitle
-                bottom=(0.16 if add_legend else 0.10),
-                wspace=0.18, hspace=0.28
+                left=left, right=right,
+                top=top, bottom=(bottom if add_legend else max(0.06, bottom - 0.04)),
+                wspace=wspace, hspace=hspace
             )
 
-            sym_sector = {s: symbol_to_sector.get(s, "Other") for s in syms}
-            first_idx_of_sector: Dict[str, int] = {}
-            for idx, s in enumerate(syms):
-                sec = sym_sector[s]
-                if sec not in first_idx_of_sector:
-                    first_idx_of_sector[sec] = idx
+            # plot each symbol (fill remaining slots with hidden axes)
+            for i, ax in enumerate(ax_flat):
+                if i < len(syms):
+                    sym = syms[i]
+                    for model in model_list:
+                        ser = frames[model][sym]
+                        ax.plot(ser.index, ser.values, linewidth=2.0, color=colors[model], label=model)
+                    ax.plot(df_real.index, df_real[sym], linewidth=2.2, color="black", label="Realized", alpha=0.95)
 
-            for ax, sym in zip(ax_flat, syms):
-                for model in model_list:
-                    ser = frames[model][sym]
-                    ax.plot(ser.index, ser.values, linewidth=2.0, color=colors[model], label=model)
-                ax.plot(df_real.index, df_real[sym], linewidth=2.2, color="black", label="Realized", alpha=0.95)
+                    ax.set_ylim(*ylimits)  # <-- GLOBAL, ABSOLUTE
+                    ax.set_xlabel("Date");
+                    ax.set_ylabel("ret_crsp")
+                    company = symbol_to_company.get(sym, "")
+                    ax.set_title(f"{sym} — {company}", fontsize=11)
+                    ax.grid(alpha=0.3)
+                    ax.tick_params(labelsize=9)
 
-                all_vals = pd.concat([frames[m][sym] for m in model_list] + [df_real[sym]])
-                y_min, y_max = all_vals.min(skipna=True), all_vals.max(skipna=True)
-                if np.isfinite(y_min) and np.isfinite(y_max):
-                    pad = 0.06 * (y_max - y_min if y_max > y_min else 1.0)
-                    ax.set_ylim(y_min - pad, y_max + pad)
+                    if use_compact_date_ticks:
+                        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+                else:
+                    ax.set_visible(False)
 
-                company = symbol_to_company.get(sym, "")
-                ax.set_title(f"{sym} — {company}", fontsize=11)
-                ax.grid(alpha=0.3)
-                ax.set_xlabel("Date")
-                ax.set_ylabel("ret_crsp")
-                ax.tick_params(labelsize=9)
+            # figure title: standalone or merged
+            is_merged_group = gname in (sector_groups or {})
+            fig.suptitle(gname, fontsize=13, fontweight="bold", y=0.975 if is_merged_group else 0.965)
 
-                if use_compact_date_ticks:
-                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-
-            # sector headers for merged groups
-            if is_merged_group:
-                for sec in group_sectors.get(gname, []):
-                    if sec not in first_idx_of_sector:
-                        continue
-                    first_ax = ax_flat[first_idx_of_sector[sec]]
-                    first_ax.text(
-                        0.5, 1.08, sec,
-                        transform=first_ax.transAxes,
-                        ha="center", va="bottom",
-                        fontsize=12, fontweight="bold"
-                    )
-            else:
-                # standalone sector: put bold figure title
-                fig.suptitle(gname, fontsize=13, fontweight="bold", y=0.965)
-
-            for ax in ax_flat[len(syms):]:
-                ax.set_visible(False)
-
+            # single, consistent legend position & size
             if add_legend:
+                # take handles/labels from first plotted axis
                 handles, labels = [], []
-                for ax in ax_flat[:len(syms)]:
-                    h, l = ax.get_legend_handles_labels()
-                    if h:
-                        handles, labels = h, l
-                        break
+                for ax in ax_flat:
+                    if ax.get_visible():
+                        h, l = ax.get_legend_handles_labels()
+                        if h:
+                            handles, labels = h, l
+                            break
                 if handles:
                     fig.legend(
                         handles, labels,
-                        loc="lower center", bbox_to_anchor=(0.5, 0.02),
+                        loc="lower center", bbox_to_anchor=(0.5, 0.03),
                         ncol=min(len(labels), 5),
                         frameon=True, framealpha=0.95, fontsize=10,
                         handlelength=2.0, handletextpad=0.6, borderaxespad=0.6,
                         columnspacing=1.2, labelspacing=0.5
                     )
 
+            # save
             safe = gname.replace(" ", "_").replace("/", "-")
             out_path = os.path.join(save_dir, f"{safe}.png")
             fig.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -325,7 +341,6 @@ class ForecastPlotter:
                 plt.show()
             else:
                 plt.close(fig)
-
             saved[gname] = out_path
 
         return saved
