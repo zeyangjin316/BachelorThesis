@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 import logging
+import matplotlib.pyplot as plt
+import pandas as pd
+from typing import Iterable, Optional, Tuple
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ class ForecastEvaluator:
         self.test_set = test_set.copy()
         self.samples = np.asarray(samples)
         self.asset_order = asset_order or sorted(self.test_set['sym_root'].unique())
+        self.daily_scores: Optional[pd.DataFrame] = None
 
         # basic sanity
         if self.samples.ndim != 3:
@@ -85,13 +89,16 @@ class ForecastEvaluator:
         # portfolio-level score storage
         energy_scores, variogram_scores, dss_scores = [], [], []
 
+        daily_records = []
+
         # per-asset storage (lists of daily metrics; may contain NaNs for missing days)
         per_asset = {sym: {"crps": [], "vs": [], "dss": []} for sym in self.asset_order}
 
         # pre-slice once for speed
         test = self.test_set[['date', 'sym_root', 'ret_crsp']]
 
-        for t, date in enumerate(tqdm(test_dates, desc="Evaluating Scores")):
+        progress = tqdm(test_dates, desc="Evaluating Scores")
+        for t, date in enumerate(progress):
             day = test[test['date'] == date]
 
             # Build per-asset y_true with mask of which assets exist
@@ -110,13 +117,23 @@ class ForecastEvaluator:
                 y_true_sub = y_vec[mask][None, :]          # (1, S_avail)
                 y_pred_sub = y_pred_t[mask][None, :, :]    # (1, S_avail, N)
 
+                progress.set_description(f"Day {t + 1}/{len(test_dates)} — ES")
                 es = es_sample(y_true_sub, y_pred_sub)
+                progress.set_description(f"Day {t + 1}/{len(test_dates)} — VS")
                 vs = vs_sample(y_true_sub, y_pred_sub, p=p)
+                progress.set_description(f"Day {t + 1}/{len(test_dates)} — DSS")
                 dss = dss_sample(y_true_sub, y_pred_sub)
 
                 energy_scores.append(es)
                 variogram_scores.append(vs)
                 dss_scores.append(dss)
+
+                daily_records.append({
+                    "date": pd.to_datetime(date),
+                    "es": float(es),
+                    "vs": float(vs),
+                    "dss": float(dss),
+                })
 
             # --- Per-asset metrics (no per-day skip) ---
             for i, sym in enumerate(self.asset_order):
@@ -145,6 +162,11 @@ class ForecastEvaluator:
         mean_vs = float(np.nanmean(variogram_scores)) if variogram_scores else np.nan
         mean_dss = float(np.nanmean(dss_scores)) if dss_scores else np.nan
 
+        if daily_records:
+            self.daily_scores = pd.DataFrame(daily_records).sort_values("date").reset_index(drop=True)
+        else:
+            self.daily_scores = pd.DataFrame(columns=["date", "es", "vs", "dss"])
+
         logger.info(
             "\n=== Forecast Evaluation Summary ===\n"
             f"Mean Energy Score (ES):            {mean_es:.6f}\n"
@@ -167,4 +189,14 @@ class ForecastEvaluator:
             **asset_means
         }
 
+
         return summary_row
+
+    def get_daily_scores(self) -> pd.DataFrame:
+        """
+        Return per-day portfolio-level scores computed in `evaluate()`.
+        Columns: ['date','es','vs','dss'].
+        """
+        if self.daily_scores is None:
+            raise RuntimeError("No daily scores yet. Call evaluate() first.")
+        return self.daily_scores.copy()

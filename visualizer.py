@@ -12,7 +12,7 @@ def save_models_legend_image(
     *,
     model_list: List[str],
     model_colors: Dict[str, tuple],  # RGBA tuples
-    save_path: str = "results/plots/legend_models.png",
+    save_path: str = "plots/legend_models.png",
     ncol: Optional[int] = None,
     include_realized: bool = True,
     realized_label: str = "Realized",
@@ -44,11 +44,11 @@ def save_models_legend_image(
 
 if __name__ == "__main__":
     # --- base output directory ---
-    base_save = "plots/results"
-    plots_dir = os.path.join(base_save, "plots")
+    base_save = "plots"
+    forecast_results_dir = os.path.join(base_save, "results")
     desc_dir = os.path.join(base_save, "descriptives")
 
-    os.makedirs(plots_dir, exist_ok=True)
+    os.makedirs(forecast_results_dir, exist_ok=True)
     os.makedirs(desc_dir, exist_ok=True)
 
     # --- model setup ---
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     legend_path = save_models_legend_image(
         model_list=model_list,
         model_colors=model_colors,
-        save_path=os.path.join(plots_dir, "legend_models.png"),
+        save_path=os.path.join(forecast_results_dir, "legend_models.png"),
         ncol=5,  # or 4 for compact
         include_realized=True,
         realized_label="Realized",
@@ -109,19 +109,19 @@ if __name__ == "__main__":
     plotter = ForecastPlotter(DataHandler(split_point=0.9))
 
     # 1) Forecast per-symbol plots
-    """plotter.plot_models_per_symbol(
+    plotter.plot_models_per_symbol(
         model_paths=model_paths,
         symbols_order=symbols_order,
         symbols_to_plot=symbols_order,
         sample_to_plot=0,
-        save_dir=plots_dir,
+        save_dir=os.path.join(forecast_results_dir, "per symbol"),
         exclude_pandemic=True,
         show=False,
         save_png=True,
         save_pdf=False,
         add_legend=True,
         model_colors=model_colors,
-    )"""
+    )
 
     # 2) Forecasts grouped-by-industry
     plotter.plot_grouped_by_sector(
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         symbol_to_company=symbol_to_company,
         symbol_to_sector=symbol_to_sector,
         sample_to_plot=0,
-        save_dir=os.path.join(plots_dir, "sectors"),
+        save_dir=os.path.join(forecast_results_dir, "by sectors"),
         exclude_pandemic=True,
         add_legend=False,
         model_colors=model_colors,
@@ -141,24 +141,22 @@ if __name__ == "__main__":
     )
 
     # 3) descriptives
-    """describe_target_ret_crsp(
+    describe_target_ret_crsp(
         DataHandler(split_point=0.9),
-        start_date="2010-01-01",
-        end_date="2023-12-31",
         rolling_window=30,
-        save_dir=desc_dir,
+        save_dir=os.path.join(desc_dir, "per symbol"),
         show=False,
         save_png=True,
         add_legend=True,
-    )"""
+    )
 
     # 4) realized returns and vol grouped by sector
-    """plot_returns_and_vol_by_sector(
+    plot_returns_and_vol_by_sector(
         data_handler=DataHandler(split_point=0.9),
         symbol_to_industry=symbol_to_sector,
         symbols_order=symbols_order,
         rolling_window=30,
-        save_dir=os.path.join(desc_dir, "sector"),
+        save_dir=os.path.join(desc_dir, "bysector"),
         show=False,
         save_png=True,
-    )"""
+    )

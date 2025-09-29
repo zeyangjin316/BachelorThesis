@@ -335,8 +335,10 @@ class ForecastPlotter:
 
             # save
             safe = gname.replace(" ", "_").replace("/", "-")
-            out_path = os.path.join(save_dir, f"{safe}.png")
-            fig.savefig(out_path, dpi=300, bbox_inches="tight")
+            for ext in ["png", "pdf"]:
+                out_path = os.path.join(save_dir, f"{safe}.{ext}")
+                fig.savefig(out_path, dpi=300, bbox_inches=None)  # bbox_inches=None keeps absolute size
+            saved[gname] = os.path.join(save_dir, f"{safe}.pdf")
             if show:
                 plt.show()
             else:
