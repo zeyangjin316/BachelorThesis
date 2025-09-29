@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from .uv_sampler import UnivariateSampler
-from .copula_models import CopulaFactory, CopulaBase, GaussianCopula
+from .copula_models import CopulaFactory, CopulaBase
 from copula_method import TSInitConfig, TSFitConfig, TSSampleConfig
 
 from contextlib import contextmanager
@@ -14,7 +14,14 @@ from tqdm.auto import tqdm
 
 @contextmanager
 def tqdm_joblib(tqdm_object):
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    """
+    Route joblib progress events into a given tqdm progress bar.
+
+    Usage
+    -----
+    with tqdm_joblib(tqdm(total=...)) as pbar:
+        Parallel(...)(...)
+    """
     class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
         def __call__(self, *args, **kwargs):
             tqdm_object.update(n=self.batch_size)
@@ -28,21 +35,47 @@ def tqdm_joblib(tqdm_object):
         joblib.parallel.BatchCompletionCallBack = old_cb
         tqdm_object.close()
 
+
 logger = logging.getLogger(__name__)
+
 
 class CopulaEstimator:
     """
-    For each test day t:
-      - Take k days of history ending at t-1
-      - Split into W1 = first l days (fit UV), W2 = last k-l days (UV samples)
-      - Fit the selected copula on W2 and store the copula object for day t
+    Per-day copula calibration from univariate marginals.
+
+    For each target test day t:
+      1) Build a lookback window of k days ending at t-1.
+      2) Split into W1 (first l days) and W2 (last k-l days).
+      3) Fit univariate models on W1; generate UV samples on W2.
+      4) Fit the selected copula on the UV samples from W2.
+      5) Optionally build day-t marginals (expanding or fixed window).
+
+    Parameters
+    ----------
+    data_dict : dict[str, pd.DataFrame]
+        Output of DataHandler.get_data(): keys include 'full_data', 'train_set', 'test_set'.
+    init_config : TSInitConfig
+        Initialization configuration (univariate model type, copula type, rolling window size, etc.).
+    fit_config : TSFitConfig
+        Univariate fit configuration (ARMA/GARCH parameters, distribution, etc.).
+    sample_config : TSSampleConfig
+        Sampling configuration (n_samples for UV/multivariate draws).
+
+    Notes
+    -----
+    - Window sizes:
+        k = round(len(train_dates) * rolling_window_size)
+        l = round(k * uv_fit_percentage)
+      with 1 <= l < k.
     """
 
-    def __init__(self,
-                 data_dict: Dict[str, pd.DataFrame],
-                 init_config: TSInitConfig,
-                 fit_config: TSFitConfig,
-                 sample_config: TSSampleConfig):
+    def __init__(
+        self,
+        data_dict: Dict[str, pd.DataFrame],
+        init_config: TSInitConfig,
+        fit_config: TSFitConfig,
+        sample_config: TSSampleConfig
+    ):
         self.data_dict = data_dict
         self.init_config = init_config
         self.fit_config = fit_config
@@ -60,7 +93,7 @@ class CopulaEstimator:
         self.all_dates:  List[pd.Timestamp] = sorted(self.full_data["date"].unique().tolist())
         self.date_index = {d: i for i, d in enumerate(self.all_dates)}
 
-        # --- Window sizes ---
+        # Window sizes
         k = int(len(self.fit_dates) * float(self.init_config.rolling_window_size))
         l = int(k * float(self.init_config.uv_fit_percentage))
 
@@ -73,34 +106,50 @@ class CopulaEstimator:
         if not (1 <= l < k):
             raise ValueError("uv_fit_percentage implies l not in [1, k-1].")
 
-        self.k_days = k                              # total_lookback_days (k)
-        self.l_days = l                              # uv_fit_window_days (l)
-        self.copula_days = k - l                     # dependence window (k-l)
+        self.k_days = k               # total lookback
+        self.l_days = l               # UV fit window
+        self.copula_days = k - l      # copula calibration window
 
-        logger.info(f"k={self.k_days} (lookback), l={self.l_days} (UV fit), "
-                    f"k-l={self.copula_days} (copula calibration)")
+        logger.info(
+            "k=%d (lookback), l=%d (UV fit), k-l=%d (copula calibration)",
+            self.k_days, self.l_days, self.copula_days
+        )
 
     # ---------------- helpers ----------------
 
     def _window_dates_for(self, t: pd.Timestamp) -> tuple[list, list]:
-        """Return (W1_dates, W2_dates) for test day t: W1=[t-k..t-k+l-1], W2=[t-k+l..t-1]."""
+        """
+        Compute (W1_dates, W2_dates) for target day t.
+
+        Returns
+        -------
+        (list, list)
+            W1 = dates [t-k, ..., t-k+l-1], W2 = dates [t-k+l, ..., t-1].
+        """
         t_idx = self.date_index[t]
         if t_idx < self.k_days:
             raise ValueError(f"Not enough history before {t} for k={self.k_days}.")
-        window = self.all_dates[t_idx - self.k_days: t_idx]  # [t-k, ..., t-1]
+        window = self.all_dates[t_idx - self.k_days: t_idx]
         w1 = window[: self.l_days]
-        w2 = window[self.l_days :]
+        w2 = window[self.l_days:]
         return w1, w2
 
     def _copula_for_day(self, t: pd.Timestamp) -> tuple[pd.Timestamp, CopulaBase] | None:
-        """Fit a copula object for a single target day t. Returns (t, copula) or None on failure."""
+        """
+        Fit a copula object for a single target day t.
+
+        Returns
+        -------
+        tuple | None
+            (t, fitted_copula) or None if insufficient data.
+        """
         try:
             w1_dates, w2_dates = self._window_dates_for(t)
         except ValueError as e:
-            logger.warning(f"[Skip {t}] {e}")
+            logger.warning("[Skip %s] %s", t, e)
             return None
         if not w2_dates:
-            logger.warning(f"[Skip {t}] empty W2.")
+            logger.warning("[Skip %s] empty W2.", t)
             return None
 
         # Fit UV on W1
@@ -120,9 +169,13 @@ class CopulaEstimator:
             fixed_window=True,
         )
 
-        # Copula selection & fit
+        # Fit copula on UV samples
         copula_params = getattr(self.init_config, "copula_params", {}) or {}
-        copula = CopulaFactory.create(self.init_config.copula_type, n_dim=len(self.symbols), copula_params=copula_params)
+        copula = CopulaFactory.create(
+            self.init_config.copula_type,
+            n_dim=len(self.symbols),
+            copula_params=copula_params
+        )
         copula.fit_from_uv_samples(
             full_data=self.full_data,
             uv_samples=uv_samples,
@@ -133,11 +186,18 @@ class CopulaEstimator:
         return (t, copula)
 
     def _marginals_for_day(self, t: pd.Timestamp, n: int) -> tuple[pd.Timestamp, dict[str, np.ndarray]] | None:
-        """Compute day-t marginals for all symbols. Returns (t, {sym->samples}) or None on failure."""
+        """
+        Build day-t univariate marginal samples for all symbols.
+
+        Returns
+        -------
+        tuple | None
+            (t, {symbol -> np.ndarray}) or None if no history is available.
+        """
         t = pd.Timestamp(t)
         hist_df = self.full_data[self.full_data["date"] < t].copy()
         if hist_df.empty:
-            logger.warning(f"[Skip {t}] no history before target.")
+            logger.warning("[Skip %s] no history before target.", t)
             return None
 
         sampler = UnivariateSampler(
@@ -158,7 +218,17 @@ class CopulaEstimator:
 
     def build_daily_copulas(self, n_jobs: int = 1) -> Dict[pd.Timestamp, CopulaBase]:
         """
-        Fit a copula object for every test day. Set n_jobs=-1 to use all cores.
+        Fit a copula object for every test day.
+
+        Parameters
+        ----------
+        n_jobs : int, default=1
+            Parallel workers; set -1 to use all cores.
+
+        Returns
+        -------
+        dict[pd.Timestamp, CopulaBase]
+            Mapping day -> fitted copula.
         """
         targets = [pd.Timestamp(t) for t in self.test_dates]
         if n_jobs == 1:
@@ -178,7 +248,19 @@ class CopulaEstimator:
 
     def build_day_marginals(self, n_samples: int, n_jobs: int = 1) -> Dict[pd.Timestamp, Dict[str, np.ndarray]]:
         """
-        Build day-t marginals for every test day. Set n_jobs=-1 to use all cores.
+        Build day-t marginals for all test days.
+
+        Parameters
+        ----------
+        n_samples : int
+            Number of univariate samples per symbol for day t.
+        n_jobs : int, default=1
+            Parallel workers; set -1 to use all cores.
+
+        Returns
+        -------
+        dict[pd.Timestamp, dict[str, np.ndarray]]
+            Mapping day -> {symbol -> samples}.
         """
         n = int(n_samples)
         targets = [pd.Timestamp(t) for t in self.test_dates]

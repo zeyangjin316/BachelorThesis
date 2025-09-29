@@ -42,7 +42,6 @@ class CGMInputBuilder:
         # debug
         self._last_training_dates: List[pd.Timestamp] = []
 
-    # ---------------- public API ----------------
 
     def fit_prepare(self, train_data: pd.DataFrame):
         """Fit scaler on train_data, transform, and build training tensors."""
@@ -221,7 +220,6 @@ class CGMInputBuilder:
         df_merged = df_base.merge(df_macro, on="date", how="inner").sort_values("date").reset_index(drop=True)
         return df_merged
 
-    # ---------------- core builders ----------------
 
     def _prepare_training_core(self, train_data: pd.DataFrame):
         expected_stocks = sorted(train_data["sym_root"].unique())
@@ -348,8 +346,6 @@ class CGMInputBuilder:
         self._last_sampling_date = pd.to_datetime(today["date"])
 
         return X_past, X_std_window, X_all, X_weekday
-
-    # ---------------- minimal tensor checker ----------------
 
     def _check_tensors(self, tensors: dict, context: str = ""):
         """

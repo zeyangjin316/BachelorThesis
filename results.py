@@ -101,7 +101,7 @@ class ResultSaver:
         }
         self._save_json("manifest.json", manifest)
 
-        print(f"✅ Results saved to: {self.base_path}")
+        print(f"Results saved to: {self.base_path}")
 
     # ---------- helpers ----------
     def _save_json(self, filename: str, payload: Any):

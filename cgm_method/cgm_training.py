@@ -10,6 +10,28 @@ logger = logging.getLogger(__name__)
 
 
 class CGMTrainer:
+    """
+    Rolling-window trainer for the Conditional Generative Model (CGM).
+
+    Trains (and reuses) CGM models across test days according to a refit
+    frequency. For each test date, stores the most recent trained model
+    and its corresponding input builder.
+
+    Parameters
+    ----------
+    full_data : pd.DataFrame
+        Full merged dataset containing at least ['date', 'sym_root', target].
+    initial_train_dates : list[datetime]
+        Ordered list of dates defining the initial training window length.
+        Its length determines the rolling window size.
+    cgm_init : CGMInitConfig
+        Initialization/config for the CGM architecture.
+    fit_cfg : CGMFitConfig
+        Training configuration (epochs, batch size, window, refit freq, etc.).
+    std_policy : {"window","full"}, default="window"
+        Standardization policy used by CGMInputBuilder.
+    """
+
     def __init__(
         self,
         full_data: pd.DataFrame,
@@ -19,14 +41,8 @@ class CGMTrainer:
         *,
         std_policy: str = "window",
     ):
-        """
-        full_data : DataFrame with all available data
-        initial_train_dates : list of training dates
-        cgm_init : CGM initialization config
-        fit_cfg : CGM fit config
-        std_policy : {"window","full"}
-        """
-        assert std_policy in {"window", "full"}
+        if std_policy not in {"window", "full"}:
+            raise ValueError("std_policy must be 'window' or 'full'.")
 
         self.full_data = full_data
         self.initial_train_dates = initial_train_dates
@@ -39,17 +55,32 @@ class CGMTrainer:
         self.builders: Dict[Any, CGMInputBuilder] = {}
 
     def _train_single_on(self, data: pd.DataFrame) -> Tuple[cgm, CGMInputBuilder]:
-        """Train a single CGM model on a rolling window of data."""
+        """
+        Train a single CGM on a given rolling-window slice.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Windowed training data (per-symbol panel up to the test day).
+
+        Returns
+        -------
+        model : cgm
+            Fitted CGM model instance.
+        builder : CGMInputBuilder
+            Builder used to create inputs/scalers for this window.
+        """
         builder = CGMInputBuilder(
             window_size=self.cfg.train_window_size,
             std_policy=self.std_policy,
         )
         X_past, X_std, X_all, X_weekday, Y = builder.fit_prepare(data)
 
+        # quick NaN/Inf check to catch upstream issues early
         for name, arr in {"X_past": X_past, "X_std": X_std, "X_all": X_all, "Y": Y}.items():
             if not np.isfinite(arr).all():
                 bad = np.isnan(arr).sum() + np.isinf(arr).sum()
-                print(f"{name} has {bad} NaN/Inf values")
+                logger.warning("%s has %d NaN/Inf values", name, int(bad))
 
         dim_out, dim_in_features, dim_in_past = builder.model_dims()
         model = cgm(
@@ -77,13 +108,23 @@ class CGMTrainer:
         return model, builder
 
     def train_all(self) -> Tuple[Dict[Any, cgm], Dict[Any, CGMInputBuilder]]:
-        """Train rolling CGM models for all test days and return models and builders."""
+        """
+        Train models across all test days using a rolling window and refit schedule.
+
+        For each test day, either refits a new model (per `train_freq`) or reuses
+        the last trained model. Returns dictionaries keyed by test date.
+
+        Returns
+        -------
+        trained_models : dict[datetime, cgm]
+            Latest model applicable for each test day.
+        builders : dict[datetime, CGMInputBuilder]
+            Matching input builders to prepare sampling inputs later.
+        """
         trained_models: Dict[Any, cgm] = {}
         builders: Dict[Any, CGMInputBuilder] = {}
 
-        all_dates = (
-            self.full_data["date"].drop_duplicates().sort_values().reset_index(drop=True)
-        )
+        all_dates = self.full_data["date"].drop_duplicates().sort_values().reset_index(drop=True)
         total_steps = len(all_dates) - self.rolling_days
 
         last_model = None
@@ -98,12 +139,13 @@ class CGMTrainer:
                 (self.full_data["date"] >= start_day) & (self.full_data["date"] < end_day)
             ]
             if rolling_data.empty:
-                logger.warning(f"No rolling data for test day {test_day}")
+                logger.warning("No rolling data for test day %s", test_day)
                 continue
 
+            # refit at the configured frequency; otherwise reuse last model
             if (i - self.rolling_days) % self.cfg.train_freq == 0:
                 days_left = total_steps - (i - self.rolling_days)
-                logger.info(f"Training CGM model for {test_day} ({days_left} days left)")
+                logger.info("Training CGM model for %s (%d days left)", test_day, max(days_left, 0))
                 last_model, last_builder = self._train_single_on(rolling_data)
 
             trained_models[test_day] = last_model
@@ -113,6 +155,6 @@ class CGMTrainer:
         self.builders = builders
 
         logger.info(
-            f"Trained {len(trained_models)} models for {total_steps} days: {list(trained_models.keys())}"
+            "Trained %d models for %d days.", len(trained_models), max(total_steps, 0)
         )
         return trained_models, builders

@@ -1,5 +1,5 @@
 import os
-from typing import Iterable, List, Optional, Dict, Tuple
+from typing import Dict, List, Optional, Tuple, Iterable
 
 import numpy as np
 import pandas as pd
@@ -15,8 +15,22 @@ from data.data_handling import DataHandler
 # -----------------------------
 
 def _auto_model_colors(model_names: List[str], provided: Optional[Dict[str, tuple]] = None) -> Dict[str, tuple]:
+    """
+    Produce a consistent RGBA color for each model.
+
+    Parameters
+    ----------
+    model_names : list[str]
+        Model labels to color.
+    provided : dict[str, tuple] | None
+        Optional explicit mapping model -> RGBA. If given, it is used as-is.
+
+    Returns
+    -------
+    dict[str, tuple]
+        Mapping model -> RGBA color.
+    """
     if provided:
-        # ensure tuples
         return {k: (tuple(v) if not isinstance(v, tuple) else v) for k, v in provided.items()}
     n = len(model_names)
     if n <= 10:
@@ -33,7 +47,27 @@ def _load_and_align_models(
     symbols_order: List[str],
     sample_to_plot: int
 ) -> Tuple[Dict[str, pd.DataFrame], int, int]:
-    """Load (T,S,N) arrays, check shapes, align to min T from end, slice sample -> DataFrames with no index yet."""
+    """
+    Load (T, S, N) samples for each model, align to the shortest T, and select one sample.
+
+    Parameters
+    ----------
+    model_paths : dict[str, str]
+        Model label -> path to .npy array (T, S, N).
+    symbols_order : list[str]
+        Asset order matching axis=1 of the arrays.
+    sample_to_plot : int
+        Index along N (sample dimension) to extract.
+
+    Returns
+    -------
+    frames : dict[str, pd.DataFrame]
+        Model -> DataFrame (aligned T, columns=symbols_order). Index unset.
+    T_align : int
+        Aligned number of days (min T across models).
+    min_N : int
+        Minimum number of samples across models.
+    """
     if not model_paths:
         raise ValueError("model_paths cannot be empty.")
 
@@ -49,7 +83,8 @@ def _load_and_align_models(
         if not np.isfinite(arr).all():
             raise ValueError(f"{label}: contains non-finite values.")
         loaded[label] = arr
-        Ts.append(T); Ns.append(N)
+        Ts.append(T)
+        Ns.append(N)
 
     min_N = min(Ns)
     if not (0 <= sample_to_plot < min_N):
@@ -66,9 +101,32 @@ def _load_and_align_models(
 
 
 def _get_realized_wide(
-        handler: DataHandler,
-        symbols_order: List[str],
-        T_align: int, exclude_pandemic: bool) -> Tuple[pd.DataFrame, np.ndarray]:
+    handler: DataHandler,
+    symbols_order: List[str],
+    T_align: int,
+    exclude_pandemic: bool
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Build realized returns in wide format aligned to the last T_align dates.
+
+    Parameters
+    ----------
+    handler : DataHandler
+        Data accessor.
+    symbols_order : list[str]
+        Desired column order.
+    T_align : int
+        Number of test dates to match (from the end).
+    exclude_pandemic : bool
+        If True, drop dates >= 2020-01-01.
+
+    Returns
+    -------
+    df_real : pd.DataFrame
+        Wide frame (date index, columns=symbols_order).
+    test_dates : np.ndarray
+        Sorted array of aligned dates.
+    """
     data_dict = handler.get_data(exclude_pandemic=exclude_pandemic, target_only=True)
     test_set = data_dict["test_set"]
     test_set = test_set[test_set["sym_root"].isin(symbols_order)]
@@ -85,6 +143,20 @@ def _get_realized_wide(
 
 
 def _save_show(fig_or_none, path: Optional[str], show: bool, dpi: int = 300):
+    """
+    Save current matplotlib figure to disk and/or display it.
+
+    Parameters
+    ----------
+    fig_or_none : object
+        Unused placeholder; present for a stable signature.
+    path : str | None
+        Destination path (including extension). If None, skip saving.
+    show : bool
+        If True, display the figure; otherwise close it.
+    dpi : int, default=300
+        Resolution for saved raster output.
+    """
     if path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         plt.savefig(path, dpi=dpi, bbox_inches="tight")
@@ -99,8 +171,17 @@ def _save_show(fig_or_none, path: Optional[str], show: bool, dpi: int = 300):
 # -----------------------------
 
 class ForecastPlotter:
-    """Thin orchestrator around compact helpers."""
+    """
+    Thin plotting orchestrator for visualizing model sample paths vs realized returns.
+    """
+
     def __init__(self, data_handler: DataHandler):
+        """
+        Parameters
+        ----------
+        data_handler : DataHandler
+            Data source used to retrieve realized returns.
+        """
         self.data_handler = data_handler
 
     def plot_models_per_symbol(
@@ -119,7 +200,41 @@ class ForecastPlotter:
         model_colors: Optional[Dict[str, tuple]] = None,
         realized_color: str = "black",
     ) -> Dict[str, str]:
+        """
+        Plot one figure per symbol: selected sample path from each model vs realized returns.
 
+        Parameters
+        ----------
+        model_paths : dict[str, str]
+            Model label -> .npy path (T,S,N).
+        symbols_order : list[str]
+            Asset order matching axis=1 of model arrays.
+        symbols_to_plot : Iterable[str] | None, default=None
+            Subset of symbols to plot; if None, plot all symbols_order.
+        sample_to_plot : int, default=0
+            Sample index along N to visualize.
+        save_dir : str, default="results/plots"
+            Output directory for figures.
+        exclude_pandemic : bool, default=True
+            If True, exclude dates >= 2020-01-01 when building realized panel.
+        show : bool, default=False
+            If True, display figures interactively.
+        save_png : bool, default=True
+            If True, save PNG files.
+        save_pdf : bool, default=False
+            If True, also save PDF files.
+        add_legend : bool, default=True
+            If True, include a legend.
+        model_colors : dict[str, tuple] | None, default=None
+            Optional explicit colors per model.
+        realized_color : str, default="black"
+            Color for realized return line.
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping symbol -> saved path (PNG or PDF).
+        """
         frames, T_align, _ = _load_and_align_models(model_paths, symbols_order, sample_to_plot)
         df_real, test_dates = _get_realized_wide(self.data_handler, symbols_order, T_align, exclude_pandemic)
         for m in frames:
@@ -142,7 +257,7 @@ class ForecastPlotter:
                          label=f"{model} (sample {sample_to_plot})")
             plt.plot(df_real.index, df_real[sym], linewidth=2, color=realized_color, label="Realized", alpha=0.9)
 
-            # y-pad
+            # y padding
             all_vals = pd.concat([frames[m][sym] for m in model_list] + [df_real[sym]])
             y_min, y_max = all_vals.min(skipna=True), all_vals.max(skipna=True)
             if np.isfinite(y_min) and np.isfinite(y_max):
@@ -150,53 +265,108 @@ class ForecastPlotter:
                 plt.ylim(y_min - pad, y_max + pad)
 
             plt.title(f"{sym} — Forecast vs Realized")
-            plt.xlabel("Date"); plt.ylabel("ret_crsp"); plt.grid(alpha=0.3)
-            if add_legend: plt.legend()
+            plt.xlabel("Date")
+            plt.ylabel("ret_crsp")
+            plt.grid(alpha=0.3)
+            if add_legend:
+                plt.legend()
             plt.tight_layout()
 
             base = os.path.join(save_dir, f"{sym}_sample{sample_to_plot}")
-            if save_png: _save_show(None, base + ".png", show)
-            if save_pdf: _save_show(None, base + ".pdf", show)
-            if not (save_png or save_pdf): _save_show(None, None, show)
+            if save_png:
+                _save_show(None, base + ".png", show)
+            if save_pdf:
+                _save_show(None, base + ".pdf", show)
+            if not (save_png or save_pdf):
+                _save_show(None, None, show)
 
             saved[sym] = (base + (".pdf" if save_pdf else ".png")) if (save_png or save_pdf) else ""
 
         return saved
 
     def plot_grouped_by_sector(
-            self,
-            *,
-            model_paths: Dict[str, str],
-            symbols_order: List[str],
-            symbol_to_company: Dict[str, str],
-            symbol_to_sector: Dict[str, str],
-            sample_to_plot: int = 0,
-            save_dir: str = "results/plots/sectors",
-            exclude_pandemic: bool = True,
-            show: bool = False,
-            add_legend: bool = True,
-            model_colors: Optional[Dict[str, tuple]] = None,
-            sector_order: Optional[List[str]] = None,
-            sector_groups: Optional[Dict[str, List[str]]] = None,
-            # layout (fixed across ALL figures):
-            a4_width: float = 11.69,
-            figsize: Tuple[float, float] = (16, 9),  # <-- fixed figure size for every sector
-            ncols: int = 2,  # <-- fixed columns in the grid for every sector
-            legend_height: float = 0.70,
-            wspace: float = 0.20,
-            hspace: float = 0.22,
-            inner_margins: Tuple[float, float, float, float] = (0.06, 0.995, 0.93, 0.12),  # left,right,top,bottom
-            use_compact_date_ticks: bool = True,
+        self,
+        *,
+        model_paths: Dict[str, str],
+        symbols_order: List[str],
+        symbol_to_company: Dict[str, str],
+        symbol_to_sector: Dict[str, str],
+        sample_to_plot: int = 0,
+        save_dir: str = "results/plots/sectors",
+        exclude_pandemic: bool = True,
+        show: bool = False,
+        add_legend: bool = True,
+        model_colors: Optional[Dict[str, tuple]] = None,
+        sector_order: Optional[List[str]] = None,
+        sector_groups: Optional[Dict[str, List[str]]] = None,
+        # fixed layout across all figures
+        a4_width: float = 11.69,
+        figsize: Tuple[float, float] = (16, 9),
+        ncols: int = 2,
+        legend_height: float = 0.70,
+        wspace: float = 0.20,
+        hspace: float = 0.22,
+        inner_margins: Tuple[float, float, float, float] = (0.06, 0.995, 0.93, 0.12),
+        use_compact_date_ticks: bool = True,
     ) -> Dict[str, str]:
-        import math, os
-        import numpy as np
-        import pandas as pd
+        """
+        Plot grouped sector figures with a fixed grid: each subplot shows one symbol.
+
+        Parameters
+        ----------
+        model_paths : dict[str, str]
+            Model label -> .npy path (T, S, N).
+        symbols_order : list[str]
+            Asset order matching axis=1 of model arrays.
+        symbol_to_company : dict[str, str]
+            Symbol -> company display name.
+        symbol_to_sector : dict[str, str]
+            Symbol -> sector name.
+        sample_to_plot : int, default=0
+            Sample index along N to visualize.
+        save_dir : str, default="results/plots/sectors"
+            Output directory for figures.
+        exclude_pandemic : bool, default=True
+            If True, exclude dates >= 2020-01-01 when building realized panel.
+        show : bool, default=False
+            If True, display figures interactively.
+        add_legend : bool, default=True
+            If True, include a shared legend at the bottom.
+        model_colors : dict[str, tuple] | None, default=None
+            Optional explicit colors per model.
+        sector_order : list[str] | None, default=None
+            Optional sector ordering for output.
+        sector_groups : dict[str, list[str]] | None, default=None
+            Optional merged groups: name -> list of sector names.
+        a4_width : float, default=11.69
+            Unused placeholder kept for compatibility (A4 width in inches).
+        figsize : tuple[float, float], default=(16, 9)
+            Fixed figure size for all sector figures.
+        ncols : int, default=2
+            Number of columns in the grid.
+        legend_height : float, default=0.70
+            Unused placeholder kept for compatibility.
+        wspace : float, default=0.20
+            Horizontal space between subplots.
+        hspace : float, default=0.22
+            Vertical space between subplots.
+        inner_margins : tuple[float, float, float, float], default=(0.06, 0.995, 0.93, 0.12)
+            (left, right, top, bottom) margins for subplots.
+        use_compact_date_ticks : bool, default=True
+            If True, use quarterly date ticks.
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping group/sector name -> saved path.
+        """
+        import math
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
         os.makedirs(save_dir, exist_ok=True)
 
-        # --- load forecast samples aligned + realized ---
+        # load aligned forecasts + realized panel
         frames, T_align, _ = _load_and_align_models(model_paths, symbols_order, sample_to_plot)
         df_real, test_dates = _get_realized_wide(self.data_handler, symbols_order, T_align, exclude_pandemic)
         for m in frames:
@@ -205,13 +375,13 @@ class ForecastPlotter:
         model_list = list(model_paths.keys())
         colors = _auto_model_colors(model_list, provided=model_colors)
 
-        # --- sector -> symbols mapping ---
+        # sector -> symbols
         sector_to_syms: Dict[str, List[str]] = {}
         for s in symbols_order:
             sec = symbol_to_sector.get(s, "Other")
             sector_to_syms.setdefault(sec, []).append(s)
 
-        # Build groups (merged first, then remaining single sectors respecting sector_order)
+        # merged groups first, then remaining single sectors (respect order)
         groups: Dict[str, List[str]] = {}
         group_sectors: Dict[str, List[str]] = {}
         used = set()
@@ -234,10 +404,7 @@ class ForecastPlotter:
             groups[sec] = sector_to_syms[sec]
             group_sectors[sec] = [sec]
 
-        # -------------------------------
-        # GLOBAL, ABSOLUTE Y-LIMIT (ALL FIGS, ALL SUBPLOTS)
-        # -------------------------------
-        # collect min/max across every symbol and every model + realized
+        # global symmetric y-limits across all figures
         global_min, global_max = np.inf, -np.inf
         for sym in symbols_order:
             vals = [frames[m][sym] for m in model_list if sym in frames[m].columns]
@@ -247,38 +414,26 @@ class ForecastPlotter:
                 continue
             s_all = pd.concat(vals)
             vmin, vmax = s_all.min(skipna=True), s_all.max(skipna=True)
-            if np.isfinite(vmin): global_min = min(global_min, vmin)
-            if np.isfinite(vmax): global_max = max(global_max, vmax)
-
-        # absolute/symmetric scale
-        if not np.isfinite(global_min) or not np.isfinite(global_max):
+            if np.isfinite(vmin):
+                global_min = min(global_min, vmin)
+            if np.isfinite(vmax):
+                global_max = max(global_max, vmax)
+        abs_max = float(max(abs(global_min), abs(global_max))) if np.isfinite(global_min) and np.isfinite(global_max) else 1.0
+        if abs_max == 0:
             abs_max = 1.0
-        else:
-            abs_max = float(max(abs(global_min), abs(global_max)))
-            if abs_max == 0:
-                abs_max = 1.0
-
         ylimits = (-abs_max, abs_max)
 
-        # -------------------------------
-        # FIXED LAYOUT ACROSS ALL FIGURES
-        # -------------------------------
-        # Use a single grid shape for every sector figure:
-        # rows = ceil(nmax_symbols_per_group / ncols)
+        # fixed grid for all figures
         nmax = max(len(syms) for syms in groups.values())
         nrows = max(1, math.ceil(nmax / ncols))
 
         saved = {}
-
-        # Sort groups by size desc then name (puts 3-stock sectors before 2-stock, etc.)
         sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
 
         for gname, syms in sorted_groups:
-            # fixed-size figure + fixed-size grid
             fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
             ax_flat = axes.ravel()
 
-            # spacing/margins identical for all figures
             left, right, top, bottom = inner_margins
             fig.subplots_adjust(
                 left=left, right=right,
@@ -286,7 +441,7 @@ class ForecastPlotter:
                 wspace=wspace, hspace=hspace
             )
 
-            # plot each symbol (fill remaining slots with hidden axes)
+            # plot each symbol; hide unused slots
             for i, ax in enumerate(ax_flat):
                 if i < len(syms):
                     sym = syms[i]
@@ -295,8 +450,8 @@ class ForecastPlotter:
                         ax.plot(ser.index, ser.values, linewidth=2.0, color=colors[model], label=model)
                     ax.plot(df_real.index, df_real[sym], linewidth=2.2, color="black", label="Realized", alpha=0.95)
 
-                    ax.set_ylim(*ylimits)  # <-- GLOBAL, ABSOLUTE
-                    ax.set_xlabel("Date");
+                    ax.set_ylim(*ylimits)
+                    ax.set_xlabel("Date")
                     ax.set_ylabel("ret_crsp")
                     company = symbol_to_company.get(sym, "")
                     ax.set_title(f"{sym} — {company}", fontsize=11)
@@ -309,13 +464,11 @@ class ForecastPlotter:
                 else:
                     ax.set_visible(False)
 
-            # figure title: standalone or merged
+            # title and shared legend
             is_merged_group = gname in (sector_groups or {})
             fig.suptitle(gname, fontsize=13, fontweight="bold", y=0.975 if is_merged_group else 0.965)
 
-            # single, consistent legend position & size
             if add_legend:
-                # take handles/labels from first plotted axis
                 handles, labels = [], []
                 for ax in ax_flat:
                     if ax.get_visible():
@@ -333,20 +486,15 @@ class ForecastPlotter:
                         columnspacing=1.2, labelspacing=0.5
                     )
 
-            # save
             safe = gname.replace(" ", "_").replace("/", "-")
             for ext in ["png", "pdf"]:
                 out_path = os.path.join(save_dir, f"{safe}.{ext}")
-                fig.savefig(out_path, dpi=300, bbox_inches=None)  # bbox_inches=None keeps absolute size
-            saved[gname] = os.path.join(save_dir, f"{safe}.pdf")
+                fig.savefig(out_path, dpi=300, bbox_inches=None)
+            saved[gname] = out_path
+
             if show:
                 plt.show()
             else:
                 plt.close(fig)
-            saved[gname] = out_path
 
         return saved
-
-
-
-

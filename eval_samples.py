@@ -1,4 +1,12 @@
 # compare_models_plots.py
+"""
+Visualization utilities to compare probabilistic forecast models
+(CGM vs. two-step copula variants). Produces temporal line plots
+and side-by-side boxplots for ES, VS, and DSS.
+
+Run as a script to load samples, build evaluators, and save figures
+under results/compare_models/.
+"""
 
 import logging
 from datetime import datetime
@@ -16,7 +24,7 @@ logger = logging.getLogger(__name__)
 # =========================
 # Global display config
 # =========================
-# Same figure geometry for ALL plots, so plotting areas match exactly.
+# Same figure geometry for all plots.
 FIGSIZE = (12, 5.5)
 MARGINS = dict(left=0.10, right=0.98, top=0.90, bottom=0.18)
 
@@ -41,20 +49,40 @@ DISPLAY_NAME = {
     "TS Skewed":   "Skewed-t Copula",
 }
 
+
 def _color_for(name: str):
+    """Return a consistent color for the given model name."""
     return MODEL_COLORS.get(name, "black")
 
+
 def _label_for(name: str):
+    """Return a display label for the given model name."""
     return DISPLAY_NAME.get(name, name)
 
+
 def _wins_clip(arr: np.ndarray, pct: tuple[float, float] | None) -> np.ndarray:
-    """Winsorize/clamp values to percentiles if requested."""
+    """
+    Winsorize an array to the given (low, high) percentiles.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input array.
+    pct : tuple[float, float] | None
+        (low, high) percentiles. If None, no clipping.
+
+    Returns
+    -------
+    np.ndarray
+        Clipped array (same shape).
+    """
     if pct is None or arr.size == 0:
         return arr
     lo, hi = np.nanpercentile(arr, pct)
     if not np.isfinite(lo) or not np.isfinite(hi):
         return arr
     return np.clip(arr, lo, hi)
+
 
 def _compute_global_ylims(
     evaluators: dict,
@@ -63,8 +91,25 @@ def _compute_global_ylims(
     pad_frac: float = 0.02,
 ) -> dict[str, tuple[float, float]]:
     """
-    Compute global min/max per metric across all models after optional winsorization.
-    Adds a small padding so lines/boxes don't sit on the frame.
+    Compute global (min, max) per metric across models after optional winsorization.
+
+    Adds symmetric padding so lines/boxes do not touch the frame.
+
+    Parameters
+    ----------
+    evaluators : dict[str, ForecastEvaluator]
+        Mapping model name -> evaluator object.
+    metrics : list[str]
+        Metric keys (e.g., ['es','vs','dss']).
+    winsorize_pct : tuple[float, float] | None
+        Percentiles for clipping, or None to disable.
+    pad_frac : float, default=0.02
+        Padding fraction of the observed range.
+
+    Returns
+    -------
+    dict[str, tuple[float, float]]
+        Metric -> (ymin, ymax).
     """
     global_ylims: dict[str, tuple[float, float]] = {}
     for key in metrics:
@@ -87,12 +132,12 @@ def _compute_global_ylims(
         if lo == hi:
             lo, hi = lo - 1.0, hi + 1.0  # degenerate safeguard
 
-        # symmetric padding proportional to range
         rng = hi - lo
         lo_p = lo - pad_frac * rng
         hi_p = hi + pad_frac * rng
         global_ylims[key] = (lo_p, hi_p)
     return global_ylims
+
 
 # =========================
 # Plotting functions
@@ -101,7 +146,7 @@ def plot_metric_boxplots_across_models(
     evaluators: dict,
     save_dir: str | None = None,
     show: bool = True,
-    # Robust display options
+    # display options
     show_fliers: bool = False,
     whis: tuple[float, float] = (5, 95),
     winsorize_pct: tuple[float, float] | None = (1, 99),
@@ -109,8 +154,33 @@ def plot_metric_boxplots_across_models(
     symlog_linthresh: float = 1.0,
 ):
     """
-    One figure per metric (ES, VS, DSS) with side-by-side model boxplots.
-    Uses GLOBAL y-lims shared with line plots and fixed canvas/margins.
+    Draw one figure per metric (ES, VS, DSS) with side-by-side model boxplots.
+
+    Uses global y-limits (shared with the line plots) and a fixed canvas.
+
+    Parameters
+    ----------
+    evaluators : dict[str, ForecastEvaluator]
+        Mapping model name -> evaluator (must provide get_daily_scores()).
+    save_dir : str | None, default=None
+        Output directory; if None, figures are not saved.
+    show : bool, default=True
+        If True, display figures; otherwise close them.
+    show_fliers : bool, default=False
+        Whether to draw outlier fliers.
+    whis : tuple[float, float], default=(5, 95)
+        Whisker percentiles.
+    winsorize_pct : tuple[float, float] | None, default=(1, 99)
+        Percentiles used to clip the series before plotting.
+    use_symlog_for_dss : bool, default=False
+        If True, apply symlog scale to DSS axis.
+    symlog_linthresh : float, default=1.0
+        Linear threshold for symlog scaling.
+
+    Returns
+    -------
+    dict[str, matplotlib.figure.Figure]
+        Metric key -> figure.
     """
     if not evaluators:
         raise ValueError("No evaluators provided.")
@@ -120,7 +190,6 @@ def plot_metric_boxplots_across_models(
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
 
-    # compute global y-lims once (after winsorization)
     global_ylims = _compute_global_ylims(evaluators, metrics, winsorize_pct)
 
     figs = {}
@@ -135,7 +204,7 @@ def plot_metric_boxplots_across_models(
             raw_data.append(s)
             names.append(model_name)
 
-        # Figure with fixed geometry
+        # Fixed geometry
         fig, ax = plt.subplots(figsize=FIGSIZE)
         fig.set_constrained_layout(False)
         fig.subplots_adjust(**MARGINS)
@@ -149,7 +218,7 @@ def plot_metric_boxplots_across_models(
             flierprops=dict(marker="o", markersize=3, alpha=0.35, color="gray"),
         )
 
-        # color boxes & style
+        # Color/style
         for patch, name in zip(bp["boxes"], names):
             patch.set_facecolor(_color_for(name))
             patch.set_alpha(0.6)
@@ -168,11 +237,11 @@ def plot_metric_boxplots_across_models(
         if use_symlog_for_dss and key == "dss":
             ax.set_yscale("symlog", linthresh=symlog_linthresh)
 
-        # Save with fixed canvas (no tight)
+        # Save with fixed canvas
         if outdir:
             for ext in ("png", "pdf"):
                 fig.savefig(outdir / f"{key}_boxplots.{ext}", dpi=200, bbox_inches=None)
-            logger.info(f"Saved {label} boxplots to {outdir}")
+            logger.info("Saved %s boxplots to %s", label, outdir)
 
         if show:
             plt.show()
@@ -194,8 +263,31 @@ def plot_metrics_across_models(
     symlog_linthresh: float = 1.0,
 ):
     """
-    One line plot per metric (ES, VS, DSS) with all models overlaid.
-    Uses GLOBAL y-lims shared with boxplots and fixed canvas/margins.
+    Draw one line plot per metric (ES, VS, DSS) with all models overlaid.
+
+    Uses global y-limits (shared with boxplots) and a fixed canvas.
+
+    Parameters
+    ----------
+    evaluators : dict[str, ForecastEvaluator]
+        Mapping model name -> evaluator (must provide get_daily_scores()).
+    rolling : int | None, default=14
+        Window for simple moving average overlay; None disables.
+    save_dir : str | None, default=None
+        Output directory; if None, figures are not saved.
+    show : bool, default=True
+        If True, display figures; otherwise close them.
+    winsorize_pct : tuple[float, float] | None, default=(1, 99)
+        Percentiles used to clip the series before plotting.
+    use_symlog_for_dss : bool, default=False
+        If True, apply symlog scale to DSS axis.
+    symlog_linthresh : float, default=1.0
+        Linear threshold for symlog scaling.
+
+    Returns
+    -------
+    dict[str, matplotlib.figure.Figure]
+        Metric key -> figure.
     """
     if not evaluators:
         raise ValueError("No evaluators provided.")
@@ -205,7 +297,6 @@ def plot_metrics_across_models(
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
 
-    # compute global y-lims once (after winsorization)
     global_ylims = _compute_global_ylims(evaluators, metrics, winsorize_pct)
 
     figs = {}
@@ -224,11 +315,11 @@ def plot_metrics_across_models(
             color = _color_for(model_name)
             label = _label_for(model_name)
 
-            # daily line
+            # Daily line
             ax.plot(df.index, y, linewidth=1.2, alpha=0.75, color=color,
                     label=f"{label} — daily")
 
-            # moving average
+            # Moving average
             if rolling and rolling > 1:
                 roll = pd.Series(y, index=df.index).rolling(
                     rolling, min_periods=max(1, rolling // 3)
@@ -245,7 +336,7 @@ def plot_metrics_across_models(
         if use_symlog_for_dss and key == "dss":
             ax.set_yscale("symlog", linthresh=symlog_linthresh)
 
-        # de-dup legend
+        # De-duplicate legend entries
         handles, labels = ax.get_legend_handles_labels()
         uniq = {l: h for h, l in zip(handles, labels)}
         ax.legend(uniq.values(), uniq.keys(), loc="upper right", frameon=False, ncol=2)
@@ -253,7 +344,7 @@ def plot_metrics_across_models(
         if outdir:
             for ext in ("png", "pdf"):
                 fig.savefig(outdir / f"{key}_multi.{ext}", dpi=200, bbox_inches=None)
-            logger.info(f"Saved {metric_label} line plots to {outdir}")
+            logger.info("Saved %s line plots to %s", metric_label, outdir)
 
         if show:
             plt.show()
@@ -264,18 +355,16 @@ def plot_metrics_across_models(
 
     return figs
 
-# =========================
-# Driver
-# =========================
+
 if __name__ == "__main__":
-    # 1) Data handlers
+    # Data handlers with different split conventions
     ts_dh = DataHandler(split_point=datetime(2019, 1, 4))
     cgm_dh = DataHandler(0.9)
 
     ts_test_set = ts_dh.get_data(exclude_pandemic=True, filter_duplicates=True)["test_set"]
     cgm_test_set = cgm_dh.get_data(exclude_pandemic=True, filter_duplicates=True)["test_set"]
 
-    # 2) Load samples
+    # Sample files (update paths as needed)
     files = {
         "TS Gaussian": "results/TWOSTEP/20250919-133921/samples_two_step.npy",
         "TS Student":  "results/TWOSTEP/20250919-135018/samples_two_step.npy",
@@ -283,18 +372,18 @@ if __name__ == "__main__":
         "CGM":         "results/CGM/20250919-142103/samples_cgm.npy",
     }
 
-    # 3) Build evaluators
+    # Evaluators per model
     evaluators = {}
     for name, path in files.items():
         samples = np.load(path)
         if name.startswith("TS"):
             ev = ForecastEvaluator(test_set=ts_test_set, samples=samples)
-        else:  # CGM
+        else:
             ev = ForecastEvaluator(test_set=cgm_test_set, samples=samples)
-        ev.evaluate(p=0.5)
+        ev.evaluate(p=0.5)  # populate daily scores and aggregates
         evaluators[name] = ev
 
-    # 4) Plots (global y-lims + identical canvas; saves PNG + PDF)
+    # Plots (global y-lims + identical canvas; saves PNG + PDF)
     outdir = "results/compare_models"
     plot_metrics_across_models(
         evaluators,

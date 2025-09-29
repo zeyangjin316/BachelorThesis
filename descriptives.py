@@ -10,20 +10,39 @@ import matplotlib.ticker as mticker
 
 def _savefig_both(fig, save_dir: str, stem: str, png_dpi: int = 300, pdf_bbox: str = "tight"):
     """
-    Save a figure as both PDF (vector) and PNG.
-    PDF: for LaTeX (crisp, scalable)
-    PNG: quick browsing/preview
+    Save a figure in both PDF (vector) and PNG (bitmap) formats.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        Figure to save.
+    save_dir : str
+        Output directory.
+    stem : str
+        Base filename without extension.
+    png_dpi : int, default=300
+        Resolution for PNG output.
+    pdf_bbox : str, default="tight"
+        Bbox option for PDF output.
     """
     base = os.path.join(save_dir, stem)
-    # PDF (vector)
-    fig.savefig(base + ".pdf", bbox_inches=pdf_bbox)
-    # PNG (bitmap)
-    fig.savefig(base + ".png", dpi=png_dpi, bbox_inches="tight")
+    fig.savefig(base + ".pdf", bbox_inches=pdf_bbox)      # PDF for LaTeX/papers
+    fig.savefig(base + ".png", dpi=png_dpi, bbox_inches="tight")  # PNG for quick preview
+
 
 # ---------- column + data utilities ----------
 
 def _extract_df_from_data_dict(data_dict) -> pd.DataFrame:
-    """Robustly extract a DataFrame from DataHandler.get_data() output."""
+    """
+    Extract a DataFrame from a DataHandler.get_data() return structure.
+
+    Accepts a DataFrame directly or common dict layouts
+    (full_data / full_set / data / df or train+test).
+
+    Returns
+    -------
+    pd.DataFrame
+    """
     if isinstance(data_dict, pd.DataFrame):
         df = data_dict
     elif isinstance(data_dict, dict):
@@ -32,7 +51,7 @@ def _extract_df_from_data_dict(data_dict) -> pd.DataFrame:
                 df = data_dict[k]
                 break
         else:
-            # common fallback: concatenate train/test
+            # fallback: concatenate train/test
             if "train_set" in data_dict and "validation_set" in data_dict:
                 df = pd.concat([data_dict["train_set"], data_dict["validation_set"]], ignore_index=True)
             elif "train_set" in data_dict and "test_set" in data_dict:
@@ -48,33 +67,38 @@ def _extract_df_from_data_dict(data_dict) -> pd.DataFrame:
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure columns are standardized: date, sym_root, ret_crsp."""
+    """
+    Standardize key column names and types: 'date', 'sym_root', 'ret_crsp'.
+
+    Returns
+    -------
+    pd.DataFrame
+    """
     df = df.copy()
     df.columns = [str(c).strip().replace(" ", "_") for c in df.columns]
 
-    # detect symbol column
+    # symbol column detection
     symbol_candidates = ["sym_root", "ticker", "TICKER", "symbol"]
     sym_col = next((c for c in symbol_candidates if c in df.columns), None)
     if sym_col is None:
         raise KeyError(f"No symbol column found; looked for {symbol_candidates}. Columns: {df.columns.tolist()}")
 
-    # detect date column
+    # date column detection
     date_candidates = ["date", "Date", "DATE"]
     date_col = next((c for c in date_candidates if c in df.columns), None)
     if date_col is None:
         raise KeyError(f"No date column found; looked for {date_candidates}. Columns: {df.columns.tolist()}")
 
-    # detect returns column (ret_crsp expected)
+    # returns column
     if "ret_crsp" not in df.columns:
         raise KeyError("Expected 'ret_crsp' column not found in data.")
 
-    # standardize names
+    # rename to canonical
     if sym_col != "sym_root":
         df.rename(columns={sym_col: "sym_root"}, inplace=True)
     if date_col != "date":
         df.rename(columns={date_col: "date"}, inplace=True)
 
-    # types
     df["date"] = pd.to_datetime(df["date"])
     return df
 
@@ -94,6 +118,17 @@ FIXED_SYMBOL_COLORS = {
 }
 
 def make_fixed_symbol_colors(symbols: list[str]) -> dict[str, tuple]:
+    """
+    Produce a consistent color mapping per symbol.
+
+    Symbols in FIXED_SYMBOL_COLORS keep their assigned color;
+    other symbols receive a color from 'tab20'.
+
+    Returns
+    -------
+    dict[str, tuple]
+        Mapping symbol -> RGBA.
+    """
     out = {}
     fallback = cm.get_cmap("tab20")
     k = 0
@@ -106,16 +141,37 @@ def make_fixed_symbol_colors(symbols: list[str]) -> dict[str, tuple]:
     return out
 
 
-def describe_target_ret_crsp(data_handler,
-                             rolling_window: int,
-                             save_dir: str,
-                             show: bool = False,
-                             save_png: bool = True,
-                             add_legend: bool = True):
-    """Descriptive plots for all symbols in dataset (incl. VIX scatter), using FIXED_SYMBOL_ORDER colors."""
+def describe_target_ret_crsp(
+    data_handler,
+    rolling_window: int,
+    save_dir: str,
+    show: bool = False,
+    save_png: bool = True,
+    add_legend: bool = True
+):
+    """
+    Create descriptive plots for daily returns by symbol:
+    time series, rolling volatility, histograms, QQ-plots,
+    correlation heatmap, boxplots, and returns vs. VIX scatter.
+
+    Parameters
+    ----------
+    data_handler : DataHandler-like
+        Object exposing get_data().
+    rolling_window : int
+        Window size for rolling volatility.
+    save_dir : str
+        Output directory for figures.
+    show : bool, default=False
+        If True, display figures interactively.
+    save_png : bool, default=True
+        If True, save figures (PDF+PNG where applicable).
+    add_legend : bool, default=True
+        If True, include legends when appropriate.
+    """
     import os, numpy as np, pandas as pd
     import matplotlib.pyplot as plt
-    import statsmodels.api as sm
+    import statsmodels.api as sm  # noqa: F401 (kept if extended later)
     from scipy import stats as sps
 
     os.makedirs(save_dir, exist_ok=True)
@@ -138,6 +194,7 @@ def describe_target_ret_crsp(data_handler,
         return None
 
     def _rc():
+        # high-DPI output and consistent styling
         return plt.rc_context({
             "figure.dpi": 1200,
             "savefig.dpi": 1200,
@@ -162,7 +219,7 @@ def describe_target_ret_crsp(data_handler,
     # ---------------- data & colors ----------------
     df = _prep_df(data_handler)
     symbols = df["sym_root"].unique().tolist()
-    colors = make_fixed_symbol_colors(symbols)  # <- uses FIXED_SYMBOL_ORDER
+    colors = make_fixed_symbol_colors(symbols)
 
     with _rc():
 
@@ -173,9 +230,12 @@ def describe_target_ret_crsp(data_handler,
             ax.plot(sub.index, sub.values, lw=0.9, label=s, color=colors[s])
         ax.set_xlabel("Date"); ax.set_ylabel("ret_crsp")
         _style(ax)
-        if add_legend: ax.legend(ncol=5, frameon=False, handleheight=1.5)
-        if save_png: _savefig_both(fig, save_dir, "ret_individual_by_symbol")
-        if show: plt.show()
+        if add_legend:
+            ax.legend(ncol=5, frameon=False, handleheight=1.5)
+        if save_png:
+            _savefig_both(fig, save_dir, "ret_individual_by_symbol")
+        if show:
+            plt.show()
         plt.close(fig)
 
         # --- Rolling volatility ---
@@ -186,12 +246,15 @@ def describe_target_ret_crsp(data_handler,
             ax.plot(roll.index, roll.values, lw=1.0, label=s, color=colors[s])
         ax.set_xlabel("Date"); ax.set_ylabel(f"Rolling Std ({rolling_window}d)")
         _style(ax)
-        if add_legend: ax.legend(ncol=5, frameon=False, handleheight=1.5)
-        if save_png: _savefig_both(fig, save_dir, f"rolling_vol_{rolling_window}d")
-        if show: plt.show()
+        if add_legend:
+            ax.legend(ncol=5, frameon=False, handleheight=1.5)
+        if save_png:
+            _savefig_both(fig, save_dir, f"rolling_vol_{rolling_window}d")
+        if show:
+            plt.show()
         plt.close(fig)
 
-        # --- Histograms ---
+        # --- Histograms (shared bins, scaled heights, shared y-limit) ---
         n = len(symbols)
         ncols = 5
         nrows = int(np.ceil(n / ncols))
@@ -205,9 +268,9 @@ def describe_target_ret_crsp(data_handler,
         global_max_val = float(df["ret_crsp"].max())
         bin_edges = np.linspace(global_min, global_max_val, bins + 1)
 
-        # global max count across assets (on raw counts)
+        # global max count across assets (raw counts)
         global_max_count = 0
-        per_symbol_counts = {}  # cache (counts, bin_edges) per symbol
+        per_symbol_counts = {}
         for s in symbols:
             sub = df.loc[df["sym_root"] == s, "ret_crsp"].dropna().to_numpy()
             counts, _ = np.histogram(sub, bins=bin_edges)
@@ -215,7 +278,7 @@ def describe_target_ret_crsp(data_handler,
             if counts.size:
                 global_max_count = max(global_max_count, counts.max())
 
-        squash_factor = 0.5  # 0.5 = half as tall; tweak as you like
+        squash_factor = 0.5  # reduce bar height to avoid clipping
 
         for ax, s in zip(axes, symbols):
             counts = per_symbol_counts.get(s)
@@ -223,7 +286,6 @@ def describe_target_ret_crsp(data_handler,
                 ax.axis("off")
                 continue
 
-            # draw bars with SCALED heights (so nothing clips)
             ax.bar(
                 bin_edges[:-1],
                 counts * squash_factor,
@@ -233,15 +295,10 @@ def describe_target_ret_crsp(data_handler,
                 color=colors[s],
                 edgecolor="none",
             )
-
-            # shared y-limit based on scaled global max
             ax.set_ylim(0, global_max_count * squash_factor)
-
-            # show TRUE counts on the ticks (undo the scaling in labels)
             ax.yaxis.set_major_formatter(
                 mticker.FuncFormatter(lambda v, pos: f"{int(round(v / squash_factor))}" if v > 0 else "0")
             )
-
             ax.set_title(s, pad=2)
             _style(ax)
 
@@ -254,8 +311,7 @@ def describe_target_ret_crsp(data_handler,
             plt.show()
         plt.close(fig)
 
-
-        # --- QQ-plots ---
+        # --- QQ-plots (shared limits) ---
         n = len(symbols)
         ncols = 5
         nrows = int(np.ceil(n / ncols))
@@ -264,11 +320,11 @@ def describe_target_ret_crsp(data_handler,
                                  constrained_layout=True)
         axes = np.asarray(axes).reshape(-1)
 
-        y_cap_pct = None  # percentile cap for shared y-limit (None to disable)
+        y_cap_pct = None  # cap percentile for shared Y (None = disabled)
 
         qq_data = {}
-        global_x_max = 0.0  # theoretical quantiles (≈3 for N(0,1))
-        global_y_max = 0.0  # empirical ordered values only
+        global_x_max = 0.0
+        global_y_max = 0.0
 
         for s in symbols:
             x = df.loc[df["sym_root"] == s, "ret_crsp"].dropna().to_numpy()
@@ -283,12 +339,10 @@ def describe_target_ret_crsp(data_handler,
 
             qq_data[s] = (z_theory, x_sorted)
 
-            # global X range
             local_x = float(np.nanmax(np.abs(z_theory)))
             if np.isfinite(local_x):
                 global_x_max = max(global_x_max, local_x)
 
-            # global Y range
             if y_cap_pct is not None:
                 local_y = float(np.nanpercentile(np.abs(x_sorted), y_cap_pct))
             else:
@@ -296,7 +350,6 @@ def describe_target_ret_crsp(data_handler,
             if np.isfinite(local_y):
                 global_y_max = max(global_y_max, local_y)
 
-        # fallbacks
         if not np.isfinite(global_x_max) or global_x_max == 0:
             global_x_max = 3.0
         if not np.isfinite(global_y_max) or global_y_max == 0:
@@ -311,13 +364,11 @@ def describe_target_ret_crsp(data_handler,
                 ax.axis("off")
                 continue
 
-            # fitted line (least-squares regression of data on theory)
             slope, intercept = np.polyfit(z_theory, x_sorted, 1)
             ax.plot([-xlim, xlim],
                     [slope * (-xlim) + intercept, slope * xlim + intercept],
                     color="black", lw=1.0, alpha=0.9, zorder=1)
 
-            # scatter points
             ax.scatter(z_theory, x_sorted, s=9, alpha=0.9, edgecolors="none",
                        facecolors=colors[s], zorder=2)
 
@@ -340,28 +391,24 @@ def describe_target_ret_crsp(data_handler,
         # --- Correlation heatmap ---
         wide = df.pivot_table(index=df.index, columns="sym_root", values="ret_crsp")
         corr = wide.corr()
-        lab = corr.columns.tolist();
+        lab = corr.columns.tolist()
         mat = corr.values
 
-        fig, ax = plt.subplots(figsize=(12, 6))  # less tall
+        fig, ax = plt.subplots(figsize=(12, 6))
         im = ax.imshow(mat, vmin=0, vmax=1, aspect="auto", cmap="Blues")
 
-        ax.set_xticks(np.arange(len(lab)));
-        ax.set_yticks(np.arange(len(lab)))
-        ax.set_xticklabels(lab, rotation=45, ha="right");
-        ax.set_yticklabels(lab)
-
+        ax.set_xticks(range(len(lab))); ax.set_yticks(range(len(lab)))
+        ax.set_xticklabels(lab, rotation=45, ha="right"); ax.set_yticklabels(lab)
         _style(ax)
 
-        # bigger, bold correlation values (black, except diagonal white)
+        # overlay numeric correlations
         for i in range(mat.shape[0]):
             for j in range(mat.shape[1]):
                 val = mat[i, j]
                 ax.text(
                     j, i, f"{val:.2f}",
                     ha="center", va="center",
-                    fontsize=14,
-                    fontweight="bold",
+                    fontsize=14, fontweight="bold",
                     color=("white" if i == j and val == 1.0 else "black"),
                 )
 
@@ -379,21 +426,16 @@ def describe_target_ret_crsp(data_handler,
         covid_start = pd.to_datetime("2020-03-01")
         pre_covid_df = df.loc[df.index < covid_start]
 
-        # data per symbol
         all_data_by_sym = {s: df.loc[df["sym_root"] == s, "ret_crsp"].dropna().values for s in symbols}
-        pre_data_by_sym = {s: pre_covid_df.loc[pre_covid_df["sym_root"] == s, "ret_crsp"].dropna().values for s in
-                           symbols}
+        pre_data_by_sym = {s: pre_covid_df.loc[pre_covid_df["sym_root"] == s, "ret_crsp"].dropna().values
+                           for s in symbols}
 
-        # build figure
         fig, ax = plt.subplots(figsize=(14, 6.5))
-
-        # spacing along x
         xs = np.arange(len(symbols), dtype=float)
         width = 0.30
         pos_all = xs - width / 2
         pos_pre = xs + width / 2
 
-        # helper to draw a styled boxplot at given positions
         def draw_boxplot(datalist, positions, hatch=False):
             bp = ax.boxplot(
                 datalist,
@@ -401,50 +443,37 @@ def describe_target_ret_crsp(data_handler,
                 widths=width * 0.95,
                 patch_artist=True,
                 showmeans=False,
-                showfliers=False,  # clean look; whiskers reflect IQR rule
+                showfliers=False,
                 whis=1.5
             )
-            # style
             for i, box in enumerate(bp["boxes"]):
                 s = symbols[i]
                 col = colors[s]
-                box.set_facecolor(col)
-                box.set_alpha(0.6)
-                box.set_edgecolor("#444444")
+                box.set_facecolor(col); box.set_alpha(0.6); box.set_edgecolor("#444444")
                 if hatch:
                     box.set_hatch("//")
-                # whiskers/caps/medians
             for w in bp["whiskers"] + bp["caps"]:
                 w.set_color("#444444")
             for med in bp["medians"]:
-                med.set_color("#222222");
-                med.set_linewidth(1.3)
+                med.set_color("#222222"); med.set_linewidth(1.3)
             return bp
 
-        # draw both sets
         all_list = [all_data_by_sym[s] for s in symbols]
         pre_list = [pre_data_by_sym[s] for s in symbols]
-        bp_all = draw_boxplot(all_list, pos_all, hatch=False)
-        bp_pre = draw_boxplot(pre_list, pos_pre, hatch=True)
+        draw_boxplot(all_list, pos_all, hatch=False)
+        draw_boxplot(pre_list, pos_pre, hatch=True)
 
-        # mean markers (white diamond) for each box
         means_all = [np.nanmean(v) if len(v) else np.nan for v in all_list]
         means_pre = [np.nanmean(v) if len(v) else np.nan for v in pre_list]
         ax.scatter(pos_all, means_all, marker="D", s=36, facecolors="white", edgecolors="#222222", zorder=3)
         ax.scatter(pos_pre, means_pre, marker="D", s=36, facecolors="white", edgecolors="#222222", zorder=3)
 
-        # zero reference
         ax.axhline(0, color="#666666", lw=1.0, ls="--", alpha=0.8)
-
-        # x axis
-        ax.set_xticks(xs)
-        ax.set_xticklabels(symbols, rotation=0)
+        ax.set_xticks(xs); ax.set_xticklabels(symbols, rotation=0)
         ax.set_xlim(xs[0] - 0.75, xs[-1] + 0.75)
-        ax.set_xlabel("Symbol")
-        ax.set_ylabel("ret_crsp")
+        ax.set_xlabel("Symbol"); ax.set_ylabel("ret_crsp")
         _style(ax)
 
-        # optional: harmonize y-range using whisker extents (ignores outliers we hid)
         ymin, ymax = np.inf, -np.inf
         for arr in all_list + pre_list:
             if len(arr):
@@ -452,13 +481,11 @@ def describe_target_ret_crsp(data_handler,
                 iqr = q3 - q1
                 lo = q1 - 1.5 * iqr
                 hi = q3 + 1.5 * iqr
-                ymin = min(ymin, lo)
-                ymax = max(ymax, hi)
+                ymin = min(ymin, lo); ymax = max(ymax, hi)
         if np.isfinite(ymin) and np.isfinite(ymax):
             pad = 0.05 * (ymax - ymin + 1e-12)
             ax.set_ylim(ymin - pad, ymax + pad)
 
-        # legend (generic patches so colors don't matter)
         leg_all = mpatches.Patch(facecolor="0.7", edgecolor="#444444", label="All data")
         leg_pre = mpatches.Patch(facecolor="0.7", edgecolor="#444444", hatch="//",
                                  label="Excl. pandemic (Mar 2020-)")
@@ -473,51 +500,42 @@ def describe_target_ret_crsp(data_handler,
             plt.show()
         plt.close(fig)
 
-        # --- Scatter returns vs VIX ---
+        # --- Scatter: returns vs VIX ---
         vix_col = _find_vix_col(df)
         if vix_col is not None:
             fig, ax = plt.subplots(figsize=(11, 8))
-
             pandemic_start = pd.to_datetime("2020-03-01")
             pandemic_end   = pd.to_datetime("2020-06-30")
 
             for s in symbols:
                 sub = df.loc[df["sym_root"] == s, [vix_col, "ret_crsp"]].dropna()
 
-                # 1) All data (base layer)
+                # base layer
                 ax.scatter(
                     sub[vix_col], sub["ret_crsp"],
-                    s=12, alpha=0.35, color=colors[s], edgecolors="none", label=None
+                    s=12, alpha=0.35, color=colors[s], edgecolors="none"
                 )
-
-                # 2) Pandemic
+                # pandemic highlight
                 sub_pand = sub.loc[(sub.index >= pandemic_start) & (sub.index <= pandemic_end)]
                 if not sub_pand.empty:
                     ax.scatter(
                         sub_pand[vix_col], sub_pand["ret_crsp"],
                         s=30, alpha=0.8, color=colors[s],
-                        edgecolors="red", linewidths=1.0, zorder=3, label=None
+                        edgecolors="red", linewidths=1.0, zorder=3
                     )
 
-            # legend entry for pandemic
             import matplotlib.patches as mpatches
             leg_pand = mpatches.Patch(facecolor="white", edgecolor="red", label="Pandemic (Mar–Jun 2020)")
 
-            # dynamic axis label from column name
-            x_label = vix_col.replace("_", " ").title()  # e.g. "vix_close" -> "Vix Close"
-            ax.set_xlabel(x_label)
+            ax.set_xlabel(vix_col.replace("_", " ").title())
             ax.set_ylabel("ret_crsp")
             _style(ax)
-
             if add_legend:
                 ax.legend(handles=[leg_pand], frameon=False, loc="upper right")
 
             fig.tight_layout()
             _savefig_both(fig, save_dir, "scatter_ret_vs_vix")
             plt.close(fig)
-
-
-
 
 
 def plot_returns_and_vol_by_sector(
@@ -531,21 +549,41 @@ def plot_returns_and_vol_by_sector(
     exclude_pandemic: bool = False,
 ):
     """
-    TWO composite figures (returns & rolling vol).
-    Layout: 2 columns × rows = ceil(#sectors / 2).
-    Each sector cell contains a vertical stack of subplots (one per symbol in that sector).
-    Y-axis scaling is ALWAYS global across ALL subplots in a figure.
-    Figure size is FIXED (consistent output).
-    Inner subplot heights are UNIFORM across sectors (padding with blank rows).
+    Generate two composite figures (returns & rolling volatility) grouped by sector.
+
+    Layout
+    ------
+    - 2 columns × rows = ceil(#sectors / 2)
+    - Each sector cell stacks subplots (one per symbol), with uniform inner heights.
+    - Y-limits are global across all subplots within a figure.
+
+    Parameters
+    ----------
+    data_handler : DataHandler-like
+        Object exposing get_data().
+    symbol_to_industry : dict[str, str]
+        Symbol → sector mapping (e.g., "AAPL" → "Information Technology").
+    symbols_order : list
+        Desired symbol order for display; if None, inferred from data.
+    rolling_window : int
+        Window size for rolling std computation.
+    save_dir : str
+        Output directory.
+    show : bool, default=False
+        If True, display figures.
+    save_png : bool, default=True
+        If True, save PNG files.
+    exclude_pandemic : bool, default=False
+        If True, exclude dates >= 2020-01-01 from the panel.
     """
     import os, math, numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
     from collections import OrderedDict
 
-    # --- styling ---
+    # styling
     plt.rcParams.update({
-        "axes.titlesize": 16,   # sector title
+        "axes.titlesize": 16,
         "axes.titleweight": "bold",
         "axes.labelsize": 12,
         "axes.labelweight": "bold",
@@ -556,19 +594,17 @@ def plot_returns_and_vol_by_sector(
 
     os.makedirs(save_dir, exist_ok=True)
 
-    # --- load + reshape data ---
+    # load + reshape
     data_dict = data_handler.get_data(exclude_pandemic=exclude_pandemic)
     df = _normalize_columns(_extract_df_from_data_dict(data_dict))
-
     if symbols_order is not None:
         df = df[df["sym_root"].isin(symbols_order)]
 
     ret_wide = df.pivot(index="date", columns="sym_root", values="ret_crsp").sort_index()
-
     symbols = list(ret_wide.columns) if symbols_order is None else list(symbols_order)
     colors = make_fixed_symbol_colors(symbols)
 
-    # --- sector groups (Energy + Financials merged) ---
+    # sector groups (merge Energy + Financials)
     MERGE_SECTORS = {"Energy", "Financials"}
     MERGED_NAME = "Energy & Financials"
 
@@ -580,16 +616,13 @@ def plot_returns_and_vol_by_sector(
             sector = MERGED_NAME
         sector_groups.setdefault(sector, []).append(s)
 
-    sectors = sorted(
-        sector_groups.keys(),
-        key=lambda sec: (-len(sector_groups[sec]), sec)
-    )
+    sectors = sorted(sector_groups.keys(), key=lambda sec: (-len(sector_groups[sec]), sec))
 
     n_sectors = len(sectors)
     ncols = 2
     nrows = max(1, math.ceil(n_sectors / ncols))
 
-    # --- GLOBAL LIMITS (always-global scaling) ---
+    # global limits (consistent scaling)
     gmax_ret = float(np.nanmax(np.abs(ret_wide[symbols].to_numpy()))) if ret_wide.shape[1] else 1.0
     if not np.isfinite(gmax_ret) or gmax_ret == 0:
         gmax_ret = 1.0
@@ -608,13 +641,21 @@ def plot_returns_and_vol_by_sector(
     if gmax_vol == 0 or not np.isfinite(gmax_vol):
         gmax_vol = 1.0
 
-    # --- plotting helper ---
     def plot_nested(kind: str, fname: str):
-        # fixed figure size (same for all outputs)
-        fig = plt.figure(figsize=(16, 10))
+        """
+        Draw a nested grid figure for either returns or rolling volatility.
+
+        Parameters
+        ----------
+        kind : {"returns", "vol"}
+            Plot type.
+        fname : str
+            Output filename.
+        """
+        fig = plt.figure(figsize=(16, 10))  # fixed size for consistency
         outer = GridSpec(nrows, ncols, figure=fig, wspace=0.2, hspace=0.25)
 
-        # compute uniform inner row count across all sectors
+        # uniform inner row count across sectors
         nmax = max(len([s for s in sector_groups[sec] if s in symbols]) for sec in sectors)
 
         for idx, sector in enumerate(sectors):
@@ -625,12 +666,11 @@ def plot_returns_and_vol_by_sector(
             if n == 0:
                 ax = fig.add_subplot(cell); ax.axis("off"); continue
 
-            # same number of inner rows for every sector cell
             inner = GridSpecFromSubplotSpec(nmax, 1, subplot_spec=cell, hspace=0.25)
             shared_x = None
             last_ax_with_data = None
 
-            # sector header
+            # sector header (in the cell)
             sec_ax = fig.add_subplot(cell)
             sec_ax.set_title(sector, fontsize=16, fontweight="bold", pad=6)
             sec_ax.axis("off")
@@ -657,12 +697,10 @@ def plot_returns_and_vol_by_sector(
                     ax.grid(alpha=0.35)
                     ax.set_title(sym, loc="left", fontsize=11, fontweight="bold", pad=2)
                     last_ax_with_data = ax
-                    ax.tick_params(labelbottom=False)  # hide except for last
+                    ax.tick_params(labelbottom=False)
                 else:
-                    # blank rows to equalize heights
                     ax.axis("off")
 
-            # put xlabel only on the last subplot with actual data
             if last_ax_with_data is not None:
                 last_ax_with_data.tick_params(labelbottom=True)
                 last_ax_with_data.set_xlabel("Date", labelpad=6)
@@ -674,12 +712,6 @@ def plot_returns_and_vol_by_sector(
             plt.show()
         plt.close(fig)
 
-    # --- make both figures ---
+    # generate both composite figures
     plot_nested("returns", "returns_nested.png")
     plot_nested("vol", "vol_nested.png")
-
-
-
-
-
-

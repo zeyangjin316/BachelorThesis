@@ -12,11 +12,24 @@ from copula_method.uv_models import register_uv_model, BaseUVModel
 
 log = logging.getLogger(__name__)
 
-# To install needed packages: python -m pip install -r requirements.txt
 
 # ---------------- helpers ----------------
 
 def _pick_target_column(df: pd.DataFrame, user_col: Optional[str]) -> str:
+    """
+    Select the target column from a DataFrame.
+
+    Preference order:
+      1) user-provided column if present
+      2) 'ret_crsp'
+      3) one of ['value','y','ret','return','price']
+      4) first numeric column
+
+    Raises
+    ------
+    ValueError
+        If no numeric column can be found.
+    """
     if user_col and user_col in df.columns:
         return user_col
     if "ret_crsp" in df.columns:
@@ -29,18 +42,47 @@ def _pick_target_column(df: pd.DataFrame, user_col: Optional[str]) -> str:
         raise ValueError("Could not infer target column; add 'ret_crsp' or set target_col on the config.")
     return num_cols[0]
 
+
 def _norm_poq(order, needs_o: bool) -> Tuple[int, int, int]:
-    # Accept (p,q) or (p,o,q); inject o=0 or o=1 as needed
+    """
+    Normalize a GARCH order to (p, o, q).
+
+    Parameters
+    ----------
+    order : tuple | list
+        Either (p, q) or (p, o, q).
+    needs_o : bool
+        If True and (p, q) is given, inject o=1; else inject o=0.
+
+    Returns
+    -------
+    tuple[int, int, int]
+        (p, o, q) triple.
+
+    Raises
+    ------
+    ValueError
+        If the input cannot be interpreted.
+    """
     if isinstance(order, (list, tuple)):
         if len(order) == 3:
             p, o, q = map(int, order)
             return p, o, q
         if len(order) == 2:
             p, q = map(int, order)
-            return (p, 0, q) if not needs_o else (p, 1, q)
+            return (p, 1, q) if needs_o else (p, 0, q)
     raise ValueError("garch_order must be (p,q) or (p,o,q)")
 
+
 def _build_vol_model(name: str, order):
+    """
+    Construct a volatility process for ARCH models.
+
+    Supports:
+      - sGARCH / GARCH
+      - GJR-GARCH (via o>0)
+      - EGARCH
+    """
     nm = (name or "sGARCH").lower()
     if nm in ("sgarch", "garch", "s-garch", "s_garch"):
         p, o, q = _norm_poq(order, needs_o=False)
@@ -54,7 +96,13 @@ def _build_vol_model(name: str, order):
     p, o, q = _norm_poq(order, needs_o=False)
     return GARCH(p=p, o=o, q=q)
 
+
 def _build_dist(name: str):
+    """
+    Construct a distribution object for the ARCH model.
+
+    Supports: Normal, Student's t, GED.
+    """
     nm = (name or "norm").lower()
     if nm in ("norm", "normal"):
         return Normal()
@@ -64,6 +112,7 @@ def _build_dist(name: str):
         return GeneralizedError()
     return Normal()
 
+
 # =========================
 #  ArmaGarchModel
 # =========================
@@ -71,18 +120,43 @@ def _build_dist(name: str):
 @register_uv_model("ARMAGARCH")
 class ArmaGarchModel(BaseUVModel):
     """
-    ARMA(p,q) + (s)GARCH/GJR/EGARCH using a dataclass config (TSFitConfig).
+    ARMA(p, q) with (s)GARCH/GJR/EGARCH residuals.
+
     Expects these attributes on `model_params`:
-      arma_order, include_mean, arma_maxiter, on_nonconverge,
-      variance_model, garch_order, dist, garch_scale, garch_target_std,
-      suppress_convergence_warnings, (optional) target_col.
+      - arma_order: tuple[int, int]
+      - include_mean: bool
+      - arma_maxiter: int
+      - on_nonconverge: {"warn","drop_ma","drop_ar"}
+      - variance_model: {"sGARCH","GJRGARCH","EGARCH", ...}
+      - garch_order: tuple[int, int] or (p,o,q)
+      - dist: {"norm","std","ged"}
+      - garch_scale: {"auto" | float}
+      - garch_target_std: float (used when garch_scale="auto")
+      - suppress_convergence_warnings: bool
+      - target_col: Optional[str]
     """
 
     def __init__(self, data: pd.DataFrame, model_params: Any):
+        """
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Long format with at least ['date','sym_root', target_col].
+        model_params : Any
+            Dataclass-like object with the fields listed in the class docstring.
+        """
         super().__init__(data, model_params)
 
     # ---- internal: fit one series ----
     def _fit_one(self, series: pd.Series) -> Dict[str, Any]:
+        """
+        Fit ARMA to the series, then ARCH family to the residuals.
+
+        Returns
+        -------
+        dict
+            Keys: 'arma', 'garch', 'n_obs', 'garch_scale'.
+        """
         ts = (
             pd.to_numeric(series, errors="coerce")
             .replace([np.inf, -np.inf], np.nan)
@@ -125,13 +199,17 @@ class ArmaGarchModel(BaseUVModel):
             fb = getattr(self.model_params, "on_nonconverge", "warn")
             try:
                 if fb == "drop_ma" and q > 0:
-                    arma_res = SARIMAX(ts, order=(p, 0, 0), trend=trend,
-                                       enforce_stationarity=False, enforce_invertibility=False,
-                                       concentrate_scale=True).fit(disp=False, method="lbfgs", maxiter=300)
+                    arma_res = SARIMAX(
+                        ts, order=(p, 0, 0), trend=trend,
+                        enforce_stationarity=False, enforce_invertibility=False,
+                        concentrate_scale=True
+                    ).fit(disp=False, method="lbfgs", maxiter=300)
                 elif fb == "drop_ar" and p > 0:
-                    arma_res = SARIMAX(ts, order=(0, 0, q), trend=trend,
-                                       enforce_stationarity=False, enforce_invertibility=False,
-                                       concentrate_scale=True).fit(disp=False, method="lbfgs", maxiter=300)
+                    arma_res = SARIMAX(
+                        ts, order=(0, 0, q), trend=trend,
+                        enforce_stationarity=False, enforce_invertibility=False,
+                        concentrate_scale=True
+                    ).fit(disp=False, method="lbfgs", maxiter=300)
             except Exception:
                 pass
             if arma_res is None:
@@ -139,7 +217,7 @@ class ArmaGarchModel(BaseUVModel):
 
         resid = arma_res.resid.astype(float)
 
-        # Residual scaling (keeps ARCH stable; predictive draws mapped back to original scale)
+        # Residual scaling for stable ARCH estimation; used to map forecasts back.
         garch_scale = getattr(self.model_params, "garch_scale", "auto")
         if isinstance(garch_scale, (int, float)):
             scale = float(garch_scale)
@@ -167,6 +245,14 @@ class ArmaGarchModel(BaseUVModel):
         }
 
     def fit(self, current_day: Optional[Union[pd.Timestamp, str]]) -> None:
+        """
+        Fit ARMA+GARCH per symbol on the provided data.
+
+        Parameters
+        ----------
+        current_day : pd.Timestamp | str | None
+            Label for logging (e.g., target test day).
+        """
         target_col = _pick_target_column(self.data, getattr(self.model_params, "target_col", None))
         fitted: Dict[str, Dict[str, Any]] = {}
 
@@ -178,29 +264,48 @@ class ArmaGarchModel(BaseUVModel):
             )
             y = sdf[target_col].astype(float).values
             if y.size >= 2:
-                log.info(f"[{sym}] {target_col} std={np.std(y, ddof=1):.6g} n={y.size}")
+                log.info("[%s] %s std=%.6g n=%d", sym, target_col, np.std(y, ddof=1), y.size)
             try:
                 fitted[sym] = self._fit_one(sdf[target_col])
             except Exception as e:
-                log.error(f"[ERROR] Failed to fit model for {sym} on day {current_day}: {e}")
+                log.error("[ERROR] Failed to fit model for %s on day %s: %s", sym, current_day, e)
 
         self.fitted_models = fitted
-        log.info(f"Fitted ARMA+GARCH for {len(fitted)} symbols at {current_day}")
+        log.info("Fitted ARMA+GARCH for %d symbols at %s", len(fitted), current_day)
 
     def sample(self, symbol: str, n_samples: int = 1000) -> np.ndarray:
+        """
+        Draw 1-step predictive samples for a fitted symbol.
+
+        Parameters
+        ----------
+        symbol : str
+            Asset symbol (must have a fitted model).
+        n_samples : int, default=1000
+            Number of draws.
+
+        Returns
+        -------
+        np.ndarray
+            Samples from N(mu_1, sigma_1^2), where mu_1 is the
+            ARMA 1-step mean and sigma_1 from the GARCH forecast
+            mapped back by the stored scale.
+        """
         if symbol not in self.fitted_models:
             raise KeyError(f"No fitted model for symbol '{symbol}'")
         m = self.fitted_models[symbol]
 
-        # 1-step mean from ARMA
+        # ARMA 1-step mean
         mu = float(m["arma"].get_forecast(steps=1).predicted_mean.iloc[-1])
 
-        # Shape-agnostic variance extraction from arch
+        # ARCH variance forecast (shape-agnostic extraction)
         fc = m["garch"].forecast(horizon=1)
         v = getattr(fc, "variance", fc)
         var_arr = np.asarray(getattr(v, "values", v))
         var1_scaled = float(var_arr.ravel()[-1])
 
+        # Map back from scaled-residual variance to original scale
         scale = float(m.get("garch_scale", 1.0))
         sigma = (var1_scaled ** 0.5) / scale
+
         return np.random.normal(loc=mu, scale=sigma, size=int(n_samples))

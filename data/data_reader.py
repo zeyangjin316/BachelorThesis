@@ -1,217 +1,106 @@
-from __future__ import annotations
-
-import logging
-import re
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
-
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-logger = logging.getLogger(__name__)
-
-ANNUALIZE = 252
-
-
-@dataclass
-class ReaderPaths:
-    base_path: str
-    ltv_path: Optional[str] = None
-    vix_path: Optional[str] = None
-    intraday_path: Optional[str] = None
-
-
-class Reader:
+class SmartScaler:
     """
-    Reads and merges:
-      - Base panel (data_for_kit.csv)
-      - LTV history (ltv_open, ltv_high, ltv_low, ltv_close, ...)
-      - VIX history (vix_open, vix_high, vix_low, vix_close, ...)
-      - Intraday 5m returns (returns_5m.csv) → 15m aggregation → realized measures
-    Keys: (date, sym_root, permno)
+    Utility class that selects a per-column scaler (MinMax or Standard)
+    for numeric features and enforces a strict round-trip check.
     """
 
-    def __init__(self, base_path: str, ltv_path: str, vix_path: str, intraday_path: str):
-        self.paths = ReaderPaths(base_path, ltv_path, vix_path, intraday_path)
-        self.data: Optional[pd.DataFrame] = None
+    def __init__(self, data: pd.DataFrame):
+        """
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Data used to decide scaling strategy and fit scalers.
+        """
+        self.data = data
+        self.scalers = {}
+        self._choose_scaler()
 
-    # ----------------------
-    # change the signature to add target_only (default False to keep old behavior)
-    def read_all(self, build_weekly_monthly: bool = True, target_only: bool = False) -> None:
-        def _check_keys(df: pd.DataFrame, step: str):
-            missing = [k for k in ["date", "sym_root", "permno"] if k not in df.columns]
-            if missing:
-                logger.error(f"[Reader] Keys missing after {step}: {missing}")
-            else:
-                logger.info(f"[Reader] Keys OK after {step}")
+    def _choose_scaler(self):
+        """
+        Decide and fit a scaler per numeric column.
 
-        # --- Base ---
-        logger.info("Reading base data...")
-        base = pd.read_csv(self.paths.base_path)
-        base = self._standardize_keys(base)
-        base["date"] = pd.to_datetime(base["date"])
-        base = base.sort_values(["sym_root", "date"]).reset_index(drop=True)
-        _check_keys(base, "loading base")
+        Rules
+        -----
+        - Constant columns → no scaler (None).
+        - Range <= 1 → MinMaxScaler.
+        - Otherwise → StandardScaler.
+        """
+        numeric_cols = self.data.select_dtypes(include='number').columns
 
-        # >>>>>> NEW: target-only fast path >>>>>>
-        if target_only:
-            if "ret_crsp" not in base.columns:
-                raise ValueError("target_only=True requires 'ret_crsp' in the base data.")
-            df = base[["date", "sym_root", "permno", "ret_crsp"]].copy()
-            # keep original behavior otherwise (no merges, no weekly/monthly)
-            self.data = df.sort_values(["sym_root", "date"]).reset_index(drop=True)
-            logger.info("Reader: target_only=True -> skipped LTV/VIX/Intraday merges; kept ret_crsp only.")
-            return
-        # <<<<<< end target-only fast path <<<<<<
+        for col in numeric_cols:
+            series = self.data[col]
+            if series.nunique() <= 1 or series.std() == 0:
+                self.scalers[col] = None
+                continue
 
-        # --- LTV ---
-        if self.paths.ltv_path:
-            logger.info("Reading LTV...")
-            ltv = pd.read_csv(self.paths.ltv_path)
-            ltv = ltv.rename(columns={c: "date" for c in ltv.columns if c.lower() == "date"})
-            ltv["date"] = pd.to_datetime(ltv["date"], errors="coerce")
-            ltv = ltv.rename(columns={c: f"ltv_{c.lower()}" for c in ltv.columns if c != "date"})
-            base = base.merge(ltv, on="date", how="left")
-            _check_keys(base, "merging LTV")
+            rng = series.max() - series.min()
+            scaler = MinMaxScaler() if rng <= 1 else StandardScaler()
+            self.scalers[col] = scaler.fit(series.values.reshape(-1, 1))
 
-        # --- VIX ---
-        if self.paths.vix_path:
-            logger.info("Reading VIX...")
-            vix = pd.read_csv(self.paths.vix_path)
-            vix = vix.rename(columns={c: "date" for c in vix.columns if c.lower() == "date"})
-            vix["date"] = pd.to_datetime(vix["date"], errors="coerce")
-            vix = vix.rename(columns={c: f"vix_{c.lower()}" for c in vix.columns if c != "date"})
-            base = base.merge(vix, on="date", how="left")
-            _check_keys(base, "merging VIX")
+    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply fitted scalers to a DataFrame and verify round-trip consistency.
 
-        # --- Intraday ---
-        if self.paths.intraday_path:
-            logger.info("Reading intraday returns...")
-            intr = pd.read_csv(self.paths.intraday_path)
-            intr = self._standardize_keys(intr)
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Input to transform.
 
-            intr["date"] = pd.to_datetime(intr["date"])
-            intr["sym_root"] = intr["sym_root"].astype(base["sym_root"].dtype)
-            intr["permno"] = intr["permno"].astype(base["permno"].dtype)
+        Returns
+        -------
+        pd.DataFrame
+            Transformed copy of `data`.
 
-            if len(intr) != len(base):
-                raise ValueError(f"Intraday rows ({len(intr)}) != base rows ({len(base)})")
+        Raises
+        ------
+        ValueError
+            If inverse_transform(transform(x)) deviates beyond tolerance.
+        """
+        df_transformed = data.copy()
+        for col, scaler in self.scalers.items():
+            if scaler is not None and col in df_transformed:
+                scaled = scaler.transform(df_transformed[[col]].values).flatten()
+                df_transformed[col] = scaled
 
-            base = self._attach_realized_measures(base, intr)
-            _check_keys(base, "merging intraday")
+                # strict round-trip check
+                inv = scaler.inverse_transform(scaled.reshape(-1, 1)).flatten()
+                orig = data[col].values
+                if not np.allclose(inv, orig, atol=1e-6, rtol=1e-6):
+                    raise ValueError(
+                        f"[SmartScaler] Roundtrip check failed for column '{col}'. "
+                        "Original vs inverse(transform) differ!"
+                    )
+        return df_transformed
 
-        # --- Weekly/monthly averages ---
-        if build_weekly_monthly:
-            base = self._attach_weekly_monthly(base)
-            _check_keys(base, "attaching weekly/monthly")
+    def inverse_transform(self, variable: str, data):
+        """
+        Undo scaling for a single variable.
 
-        # --- Final check ---
-        missing = [k for k in ["date", "sym_root", "permno"] if k not in base.columns]
-        if missing:
-            raise ValueError(f"[Reader] Final dataframe is missing keys: {missing}")
-        for k in ["date", "sym_root", "permno"]:
-            if base[k].isna().any():
-                raise ValueError(f"[Reader] Column {k} contains NaNs after merging")
+        Parameters
+        ----------
+        variable : str
+            Column name whose scaler should be used.
+        data : array-like or pd.DataFrame
+            Values to inverse-transform.
 
-        self.data = base
+        Returns
+        -------
+        np.ndarray | pd.DataFrame
+            Data restored to original scale and shape.
+        """
+        scaler = self.scalers.get(variable)
+        if scaler is None:
+            return data  # no scaling was applied
 
-    # ----------------------
-    # Key standardization
-    # ----------------------
-    def _standardize_keys(self, df: pd.DataFrame) -> pd.DataFrame:
-        rename_map = {}
-        for c in df.columns:
-            if c.lower() == "sym_root":
-                rename_map[c] = "sym_root"
-            if c.lower() == "date":
-                rename_map[c] = "date"
-            if c.lower() == "permno":
-                rename_map[c] = "permno"
-        if rename_map:
-            df = df.rename(columns=rename_map)
+        arr = np.asarray(data).reshape(-1, 1)
+        inv_flat = scaler.inverse_transform(arr).flatten()
 
-        required = {"date", "sym_root", "permno"}
-        for col in required:
-            if col not in df.columns:
-                raise ValueError(f"Missing required column '{col}' after standardization")
-
-        return df
-
-    # ----------------------
-    # Intraday realized measures
-    # ----------------------
-    def _attach_realized_measures(self, base: pd.DataFrame, intr: pd.DataFrame) -> pd.DataFrame:
-        # identify intraday return columns (V1, V2, …)
-        ret5_cols = [c for c in intr.columns if re.match(r"^V\d+$", c)]
-        ret5_cols = sorted(ret5_cols, key=lambda x: int(re.sub(r"\D", "", x)))
-        intr[ret5_cols] = intr[ret5_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-
-        # --- align key dtypes with base ---
-        intr["date"] = pd.to_datetime(intr["date"])
-        intr["sym_root"] = intr["sym_root"].astype(base["sym_root"].dtype)
-        intr["permno"] = intr["permno"].astype(base["permno"].dtype)
-
-        # --- aggregate 5m → 15m ---
-        ret15_cols, intr = self._aggregate_5m_to_15m(intr, ret5_cols)
-
-        R15 = intr[ret15_cols]
-        rv_day = R15.pow(2).sum(axis=1).to_numpy()
-        rs_neg_day = R15.clip(upper=0.0).pow(2).sum(axis=1).to_numpy()
-
-        measures = intr[["date", "sym_root", "permno"]].copy()
-        measures["RVd_ann"] = rv_day * ANNUALIZE
-        measures["RSd_neg_ann"] = rs_neg_day * ANNUALIZE
-
-        # --- merge safely on keys ---
-        df = base.merge(measures, on=["date", "sym_root", "permno"], how="left", validate="1:1")
-        return df
-
-    @staticmethod
-    def _aggregate_5m_to_15m(intr: pd.DataFrame, ret5_cols: List[str]) -> Tuple[List[str], pd.DataFrame]:
-        n5 = len(ret5_cols)
-        n_groups = n5 // 3
-        data = {}
-        ret15_cols = []
-
-        for g in range(n_groups):
-            c1, c2, c3 = ret5_cols[3*g], ret5_cols[3*g+1], ret5_cols[3*g+2]
-            out_col = f"ret_15m_{g+1:02d}"
-            data[out_col] = (1.0 + intr[c1]) * (1.0 + intr[c2]) * (1.0 + intr[c3]) - 1.0
-            ret15_cols.append(out_col)
-
-        intr = pd.concat([intr, pd.DataFrame(data, index=intr.index)], axis=1)
-        return ret15_cols, intr
-
-    # ----------------------
-    # Weekly/monthly averages
-    # ----------------------
-    def _attach_weekly_monthly(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.sort_values(["sym_root", "date"]).copy()
-
-        df["RVw_ann"] = (
-            df.groupby("sym_root", group_keys=False)["RVd_ann"]
-            .transform(lambda x: x.rolling(window=5, min_periods=5).mean())
-        )
-        df["RVm_ann"] = (
-            df.groupby("sym_root", group_keys=False)["RVd_ann"]
-            .transform(lambda x: x.rolling(window=21, min_periods=21).mean())
-        )
-        df["RSw_neg_ann"] = (
-            df.groupby("sym_root", group_keys=False)["RSd_neg_ann"]
-            .transform(lambda x: x.rolling(window=5, min_periods=5).mean())
-        )
-        df["RSm_neg_ann"] = (
-            df.groupby("sym_root", group_keys=False)["RSd_neg_ann"]
-            .transform(lambda x: x.rolling(window=21, min_periods=21).mean())
-        )
-
-        return df
-
-    @staticmethod
-    def _avg_daily(g: pd.DataFrame) -> pd.DataFrame:
-        g = g.copy()
-        g["RVw_ann"] = g["RVd_ann"].rolling(window=5, min_periods=5).mean()
-        g["RVm_ann"] = g["RVd_ann"].rolling(window=21, min_periods=21).mean()
-        g["RSw_neg_ann"] = g["RSd_neg_ann"].rolling(window=5, min_periods=5).mean()
-        g["RSm_neg_ann"] = g["RSd_neg_ann"].rolling(window=21, min_periods=21).mean()
-        return g
+        if isinstance(data, pd.DataFrame):
+            return pd.DataFrame(inv_flat.reshape(np.shape(data)),
+                                index=getattr(data, 'index', None))
+        else:
+            return inv_flat.reshape(np.shape(data))
