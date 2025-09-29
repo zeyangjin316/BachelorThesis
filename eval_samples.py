@@ -339,7 +339,7 @@ def plot_metrics_across_models(
         # De-duplicate legend entries
         handles, labels = ax.get_legend_handles_labels()
         uniq = {l: h for h, l in zip(handles, labels)}
-        ax.legend(uniq.values(), uniq.keys(), loc="upper right", frameon=False, ncol=2)
+        #ax.legend(uniq.values(), uniq.keys(), loc="upper right", frameon=False, ncol=len(uniq))
 
         if outdir:
             for ext in ("png", "pdf"):
@@ -354,6 +354,50 @@ def plot_metrics_across_models(
         figs[key] = fig
 
     return figs
+
+def export_legend(
+    save_dir: str,
+    models: list[str],
+    ncol: int = 1,
+    ext=("png", "pdf"),
+    rolling: int = 14,  # label the MA line
+):
+    """
+    Export legend as its own standalone figure (2 rows: daily + MA).
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from pathlib import Path
+
+    outdir = Path(save_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    handles, labels = [], []
+    for m in models:
+        c = _color_for(m)
+        handles.append(Line2D([], [], color=c, lw=1.2, alpha=0.75))
+        labels.append(f"{_label_for(m)} — daily")
+        handles.append(Line2D([], [], color=c, lw=2.2, ls=":", alpha=1.0))
+        labels.append(f"{_label_for(m)} — MA{rolling}")
+
+    # force 2 rows (daily row + MA row)
+    ncol = len(models)
+
+    fig, ax = plt.subplots(figsize=(7.5, 2.0))
+    ax.axis("off")
+    leg = ax.legend(handles, labels, loc="center", frameon=False, ncol=ncol)
+
+    # tight crop around legend
+    for e in ext:
+        fig.savefig(
+            outdir / f"legend_scores.{e}",
+            dpi=200,
+            bbox_extra_artists=(leg,),
+            bbox_inches="tight",
+            pad_inches=0.0,
+            transparent=True,
+        )
+    plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -385,12 +429,6 @@ if __name__ == "__main__":
 
     # Plots (global y-lims + identical canvas; saves PNG + PDF)
     outdir = "results/compare_models"
-    plot_metrics_across_models(
-        evaluators,
-        rolling=14,
-        save_dir=outdir,
-    )
-    plot_metric_boxplots_across_models(
-        evaluators,
-        save_dir=outdir,
-    )
+    plot_metrics_across_models(evaluators, rolling=14, save_dir=outdir)
+    plot_metric_boxplots_across_models(evaluators, save_dir=outdir)
+    export_legend(outdir, list(evaluators.keys()), ncol=2)
